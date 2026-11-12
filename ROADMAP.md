@@ -40,8 +40,8 @@ implementation, reproducible testing, and documentation updates.
 -   [x] `get_authenticated_tenant_context()` dependency (JWT + `X-Organization-Id` → signed tenant context).
 -   [x] Authentication functional tests: 9/9 passed (login, rotation, replay, logout, disabled user).
 -   [ ] Registration / invitation / account activation flow.
--   [ ] Provisioning endpoint or script for Argon2id password hashes.
--   [ ] Migration of IAM routes (`/users`, `/organizations/me`, `/roles`) to `get_authenticated_tenant_context()`.
+-   [x] Provisioning endpoint or script for Argon2id password hashes.
+-   [x] Migration of IAM routes (`/users`, `/organizations/me`, `/roles`) to `get_authenticated_tenant_context()`.
 -   [ ] Removal or deprecation of `X-Debug-*` headers from the production code path.
 -   [ ] Role assignment and permission checks enforced at the route level (RBAC middleware).
 -   [ ] Negative tests and suspended-account handling in the automated test suite.
@@ -55,7 +55,7 @@ implementation, reproducible testing, and documentation updates.
 -   [x] Document the threat model and its limitations (`docs/05-securite/security.md`).
 -   [ ] Automated isolation tests between two organizations (Pytest).
 -   [ ] Test cross-organization access attempts (partially done manually).
--   [ ] Tenant isolation tests under JWT authentication (after IAM route migration).
+-   [x] Tenant isolation tests under JWT authentication (after IAM route migration).
 
 ## Phase 5 — Cryptography and Security
 

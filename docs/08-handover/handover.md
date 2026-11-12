@@ -1,28 +1,39 @@
 MASTER HANDOVER PROMPT — SECUREBIZ LAB
-Version 14 — Priority 5 and Priority 6 Complete, Image Rebuilt, Session Store Clean, and Readiness for Priority 8 (Provisioning)
-Snapshot date: 12 November 2026
+Version 14.1 — Priority 5, Priority 6, and Priority 8 Complete;
+Image Rebuilt; Vault Re-Provisioned; Ready for Priority 9 (Extended Tests)
+Snapshot date: 12 November 2026 (evening session)
 Project directory: C:\Users\nguey\Documents\SecureBiz-Lab
-Environment: Windows 11, PowerShell (5.1), Docker Desktop with WSL2, Python 3.12 in the API container, PostgreSQL 16, FastAPI, psycopg, HashiCorp Vault 1.20 (dev mode), pgsodium 3.1.9.
+Environment: Windows 11, PowerShell (5.1), Docker Desktop with WSL2,
+  Python 3.12 in the API container, PostgreSQL 16, FastAPI, psycopg,
+  HashiCorp Vault 1.20 (dev mode, inmem), pgsodium 3.1.9.
 
 1. PURPOSE AND OPERATING INSTRUCTIONS
 You are taking over an ongoing technical and security engineering project named SecureBiz Lab.
 
-This document is the consolidated Version 14 handover. It supersedes Version 13.
+This document is the consolidated Version 14.1 handover. It supersedes Version 13.
 
 It incorporates:
 
-The complete Priority 5 implementation (JWT authentication, refresh tokens, authentication routes, authenticated dependencies).
-The complete Priority 6 implementation (migration of IAM routes to JWT authentication, migration of the isolation test to httpx.AsyncClient + ASGITransport).
+The complete Priority 5 implementation (JWT authentication, refresh tokens,
+  authentication routes, authenticated dependencies).
+The complete Priority 6 implementation (migration of IAM routes to JWT
+  authentication, migration of the isolation test to httpx.AsyncClient +
+  ASGITransport).
+The complete Priority 8 implementation (dedicated PostgreSQL role
+  securebiz_provisioner, Vault policy provisioner-read, two scripts:
+  scripts/set_provisioner_password.py and scripts/provision_user.py,
+  Argon2id provisioning tested end-to-end).
 The rebuild of the API image, now persisted with all Priority 5 packages.
+The Vault restart on 12 November 2026 (inmem storage), and the full
+  re-provisioning of all Vault secrets (JWT, provisioner, policy, token).
 The cleanup of the refresh-token store after the functional tests.
-All functional test results: 9/9 for Priority 5 (P1-P8 and P11), 4/4 for Priority 6 (F2).
-The 8 operational and technical corrections discovered during Priority 5, and the 7 additional corrections discovered during Priority 6.
-The current git state: 4 commits, origin/main aligned on a65f27b.
-The exact continuation point: Priority 8 (provisioning endpoint or script for Argon2id hashes), followed by Priority 9 (extended tests and state_check extension).
-
-Do not restart the project from Version 13. Do not repeat completed inspections. Do not treat a proposed architecture as implemented merely because it has been discussed.
-
-The purpose is to continue from the actual state of the project, not from an earlier proposed inspection plan.
+All functional test results: 9/9 for Priority 5 (P1-P8 and P11),
+  4/4 for Priority 6 (F2), 1/1 end-to-end provisioning test for Priority 8.
+The operational and technical corrections discovered during Priority 5,
+  Priority 6, and Priority 8.
+The current git state: 5 commits, origin/main aligned on 83071f1.
+The exact continuation point: Priority 9 (extended tests and state_check
+  extension), followed by Priority 10 (hygiene and deprecations).
 
 1.1 Rules for distinguishing evidence
 Use the following categories throughout the investigation:
@@ -233,7 +244,7 @@ A UUID is an identifier, not an authentication credential.
 JWT HS256 authenticates the user to the API. Vault Transit Ed25519 signs the tenant context for PostgreSQL. These two mechanisms must never be confused.
 Refresh tokens are opaque, stored hashed (SHA-256), rotated on every use, and grouped into revocable families with reuse detection.
 
-As of Version 14, the authentication portion of this chain is fully implemented and tested for the /auth/* endpoints AND for the IAM routes (/users, /organizations/me, /roles), which now use get_authenticated_tenant_context (JWT + X-Organization-Id). The debug-header path (get_tenant_context) remains defined in app/api/dependencies.py for backward compatibility but is no longer used by the IAM routes.
+As of Version 14.1, the authentication portion of this chain is fully implemented and tested for the /auth/* endpoints AND for the IAM routes (/users, /organizations/me, /roles), which now use get_authenticated_tenant_context (JWT + X-Organization-Id). The debug-header path (get_tenant_context) remains defined in app/api/dependencies.py for backward compatibility but is no longer used by the IAM routes.
 
 3. DEVELOPMENT ENVIRONMENT
 3.1 Local environment
@@ -369,6 +380,44 @@ Consequence: the critical technical debt documented in v13 §3.5 is RESOLVED. A 
 
 The commit 158aeb4 feat(priority5): JWT auth + refresh tokens + auth routes + rebuild is the trace of this rebuild. The prior PyPI timeout failures (ReadTimeoutError) were transitory and did not block the final rebuild.
 
+3.5.1 Vault restart and re-provisioning — 12 November 2026 (new in v14.1)
+
+During the evening session of 12 November 2026, the securebiz-vault container
+was found in Exited (255) state. The API container was crash-looping on
+init_vault_key() because the Docker DNS name 'vault' did not resolve.
+
+Cause: the Vault container had been stopped externally (Docker Desktop or
+manual stop). Vault uses Storage Type: inmem, so all secrets were lost on
+restart:
+  - transit key securebiz-context (recreated automatically by init_vault_key())
+  - secret/data/securebiz/jwt (lost, re-provisioned)
+  - secret/data/securebiz/provisioner (lost, re-provisioned)
+  - policy provisioner-read (lost, re-applied from vault/policies/provisioner-read.hcl)
+  - token provisioner-script (lost, recreated with -ttl=8h -explicit-max-ttl=24h)
+
+Re-provisioning performed:
+  - JWT secret: new 32-byte value generated with RandomNumberGenerator
+    (PowerShell). Written as version 2 then version 3 (double write, see
+    pitfall 27). current_kid is v2 (cosmetic).
+  - Provisioner secret: new 32-byte password written to
+    secret/data/securebiz/provisioner (key db_password, version 1).
+  - Policy provisioner-read: re-applied from the HCL file on disk.
+  - Token provisioner-script: recreated (new accessor, 8h TTL).
+
+Persistent state after restart:
+  - PostgreSQL data (users, memberships, organizations, credentials table
+    schema) is intact. Only Vault secrets were lost.
+  - The securebiz_provisioner role in PostgreSQL still exists with its
+    LOGIN attribute and password (managed by PostgreSQL, not Vault).
+  - The securebiz_user password was reset to a 48-character value
+    (cryptographically safe, generated with RandomNumberGenerator) and
+    synchronized between PostgreSQL and .env. See Section 5.
+
+Dette résiduelle documentée: Vault inmem means any future container restart
+will lose all secrets again. Mitigation (out of scope for v14): switch to
+Vault with file or Consul storage backend, or implement an automated
+re-provisioning script.
+
 4. REPOSITORY INVENTORY
 The latest recursive inventory excluded .git, .venv, caches and .env.
 
@@ -456,23 +505,35 @@ tests/test_isolation.py	Tenant-isolation tests (JWT + ASGITransport as of Priori
 4.1 Git history — VERIFIED 12 November 2026 (supersedes v13 §4.1)
 git is available (2.56.0.windows.4). The repository root is C:/Users/ngu ey/Documents/SecureBiz-Lab, branch main, not a shallow clone.
 
-Verified commit list (git log --oneline, 12 November 2026):
+Verified commit list (git log --oneline, 12 November 2026 evening):
 
 text
-a65f27b (HEAD -> main, origin/main) feat(priority6): migrate IAM routes and isolation test to JWT auth
+83071f1 (HEAD -> main, origin/main) feat(priority8): provisioner role, Vault policy, Argon2id provisioning scripts, and v14 handover
+a65f27b                              feat(priority6): migrate IAM routes and isolation test to JWT auth
 ff7d60a                              docs(v0.4.0): update documentation for Priority 5
 158aeb4                              feat(priority5): JWT auth + refresh tokens + auth routes + rebuild
 2362024                              feat: v0.3.0 - validated cryptographic architecture (Vault + pgsodium + RLS)
 
-The v13 §4.1 statement "the repository contains exactly one commit (2362024)" is OBSOLETE. There are four commits as of 12 November 2026.
+The v13 §4.1 statement "the repository contains exactly one commit" is
+OBSOLETE. There are five commits as of 12 November 2026 (evening).
 
-The v13 §4.1 statement "the Priority 5 changes (9 files) have not been committed yet" is OBSOLETE. Priority 5 is committed in 158aeb4 and documented in ff7d60a.
+The v13 §4.1 statement "the Priority 5 changes (9 files) have not been
+committed yet" is OBSOLETE. Priority 5 is committed in 158aeb4.
 
-The v13 §28 statement "git commit / push of Priority 5 changes — PENDING" is OBSOLETE. Priority 5 and Priority 6 are both committed and pushed.
+The v13 §28 statement "git commit / push of Priority 5 changes — PENDING"
+is OBSOLETE.
 
-git log --all --oneline -S searches for INSERT INTO public.users, INSERT INTO public.memberships, and INSERT INTO auth_private.credentials returned zero matching commits. This proves that no such statement was ever committed in any commit visible in the current history.
+The v14 §4.1 statement "there are four commits" is OBSOLETE. Priority 8
+added a fifth commit (83071f1).
 
-Inference (not verified artifact): the existing active user, membership, and organization were provisioned by a manual, unversioned psql operation executed by securebiz_user during the 09-10 November 2026 session, using the test UUIDs now hardcoded in scripts/state_check.py (see Section 4.2). This remains unknown as a versioned artifact, but is defensible as manually provisioned with hardcoded test identities.
+The new commit 83071f1 contains:
+  - database/migrations/003_provisioner_role.sql
+  - vault/policies/provisioner-read.hcl
+  - scripts/set_provisioner_password.py
+  - scripts/provision_user.py
+  - docs/08-handover/handover.md (v13 → v14 update)
+
+5 files changed, 995 insertions(+), 314 deletions(-).
 
 4.2 Hardcoded test identities in scripts/state_check.py — verified 11 November 2026
 scripts/state_check.py (11343 bytes) contains the following hardcoded values:
@@ -516,19 +577,43 @@ The script does not call securebiz_register_public_key, securebiz_revoke_public_
 
 The script does duplicate a portion of the Vault signing logic already present in app/services/context_signing.py, intentionally, for cross-validation. This is a second source of truth to maintain.
 
-4.4 Git working tree — verified 12 November 2026
-After the Priority 6 commit (a65f27b), the working tree is clean:
+4.4 Git working tree — verified 12 November 2026 (evening)
+
+After the Priority 8 commit (83071f1), the working tree is clean:
 
 text
 git status --short
 (empty)
 
-No unstaged changes, no untracked files, no leftover .bak-v13 backups.
+No unstaged changes, no untracked files, no leftover .bak-v13 or .bak-v14
+backups.
+
+Note: .gitignore currently contains `.env`, `__pycache__/`, `*.py[cod]`,
+`.venv/`, `venv/`, `.pytest_cache/`, `.coverage`, `*.bak`. It does NOT
+contain `.env.backup-*` or `*.bak-*`. These entries should be added in a
+future hygiene commit (Priority 10).
 
 5. ENVIRONMENT VARIABLES — VERIFIED NAMES AND BEHAVIOR
 The .env file was inspected safely. Only variable names and lengths were displayed.
 
 Current state (verified 11 November 2026 after recovery, unchanged in v14):
+.env change on 12 November 2026 (evening):
+
+The POSTGRES_PASSWORD value was reset to a new 48-character
+cryptographically-safe value (generated with RandomNumberGenerator) and
+synchronized between PostgreSQL (ALTER ROLE securebiz_user) and .env.
+The old 15-character value was replaced.
+
+This change was made because the script set_provisioner_password.py could
+not authenticate as securebiz_user via SCRAM-SHA-256 with the .env value
+(password authentication failed). After regeneration, a direct psycopg
+connection test from the securebiz-api container confirmed
+"CONNECTION_OK: securebiz_user".
+
+The .env round-trip was verified: the value read back from .env matches
+the value used for ALTER ROLE (exact match, 48 chars, 1 occurrence).
+
+Note: no value is displayed here. The .env is local and ignored by git.
 
 text
 POSTGRES_DB=securebiz
@@ -568,6 +653,29 @@ securebiz_auth	Yes	No	Yes	No
 securebiz_owner	No	No	Yes	No
 securebiz_user	Yes	Yes	Yes	Yes
 
+securebiz_provisioner (new in Priority 8, commit 83071f1):
+
+Role        LOGIN  SUPERUSER  INHERIT  BYPASSRLS  CREATEROLE  CREATEDB  REPLICATION
+securebiz_provisioner  Yes   No        No       No         No          No        No
+
+Attributes verified (after activation on 12 November 2026 evening):
+  - rolcanlogin = t (activated via ALTER ROLE ... WITH LOGIN PASSWORD)
+  - rolsuper = f
+  - rolcreatedb = f
+  - rolcreaterole = f
+  - rolinherit = f (NOINHERIT, explicit)
+  - rolreplication = f
+  - rolbypassrls = f
+  - No role memberships (pg_auth_members returns 0 for this role)
+
+Purpose: dedicated role for Argon2id credential provisioning. It can only
+INSERT into auth_private.credentials. It cannot SELECT, UPDATE, or DELETE.
+It is never used by the API runtime.
+
+Password storage: the role password is stored in Vault KV-v2 at
+secret/data/securebiz/provisioner (key db_password). The password is
+never in .env, never in git, never displayed.
+
 Additional attributes observed:
 
 securebiz_user has CREATEROLE, CREATEDB and replication privileges.
@@ -593,12 +701,16 @@ A grant restriction against securebiz_user is not a meaningful security boundary
 7. LIVE SCHEMA PRIVILEGES
 Verified live on 11 November 2026. Unchanged in v14.
 
-auth_private
+auth_private (updated v14.1):
 securebiz_auth: USAGE.
 securebiz_owner: USAGE.
 securebiz_app: no USAGE.
+securebiz_provisioner: USAGE (new in Priority 8).
 PUBLIC: no listed privileges.
 securebiz_user: USAGE and CREATE.
+
+securebiz_provisioner has USAGE on the schema but only INSERT on
+auth_private.credentials. It has no SELECT, UPDATE, or DELETE on that table.
 
 auth_security
 securebiz_app: USAGE.
@@ -823,6 +935,53 @@ SELECT count(*) AS total, count(*) FILTER (WHERE revoked_at IS NULL) AS active F
 -- 11|0
 
 Do not modify the table without inspecting the schema (column names: id, user_id, family_id, token_hash, issued_at, expires_at, revoked_at, replaced_by, user_agent, ip_address) and the revocation model (§22.3). Never DELETE rows; revocation is by UPDATE revoked_at.
+
+8.9 securebiz_provisioner privileges — verified 12 November 2026 (new in v14.1)
+
+The role securebiz_provisioner was created by migration 003 with:
+
+  CREATE ROLE securebiz_provisioner
+      NOLOGIN
+      NOSUPERUSER
+      NOCREATEDB
+      NOCREATEROLE
+      NOINHERIT
+      NOREPLICATION
+      NOBYPASSRLS;
+
+  GRANT USAGE ON SCHEMA auth_private TO securebiz_provisioner;
+  GRANT INSERT ON TABLE auth_private.credentials TO securebiz_provisioner;
+
+The role was initially NOLOGIN (fail-closed). It was activated later via
+ALTER ROLE securebiz_provisioner WITH LOGIN PASSWORD '<value from Vault>',
+executed by scripts/set_provisioner_password.py.
+
+Effective privileges verified (after activation):
+
+  has_schema_privilege('securebiz_provisioner', 'auth_private', 'USAGE')
+    = true
+  has_table_privilege('securebiz_provisioner', 'auth_private.credentials',
+    'INSERT') = true
+  has_table_privilege('securebiz_provisioner', 'auth_private.credentials',
+    'SELECT') = false
+  has_table_privilege('securebiz_provisioner', 'auth_private.credentials',
+    'UPDATE') = false
+  has_table_privilege('securebiz_provisioner', 'auth_private.credentials',
+    'DELETE') = false
+
+End-to-end test (12 November 2026):
+  - Created a throwaway user (id 00000000-0000-0000-0000-00000000a001,
+    email provision-test@example.com) in public.users.
+  - Ran scripts/provision_user.py --user-id <uuid> --generate.
+  - The script read the provisioner password from Vault, hashed the new
+    password with Argon2id (same parameters as auth.py), and inserted the
+    credential as securebiz_provisioner.
+  - Verified POST /auth/login with the generated password returns 200 with
+    an access_token.
+  - Cleaned up: deleted the credential and the throwaway user.
+
+No DELETE was performed on auth_private.credentials by the role itself.
+The cleanup was done via securebiz_user for test hygiene only.
 
 9. LIVE RLS FLAGS
 Verified live on 11 November 2026. Unchanged in v14.
@@ -2108,42 +2267,54 @@ Verified by TCP test: get_auth_connection() successfully connects as securebiz_a
 21. AUTHENTICATION AND PROVISIONING — STATUS AFTER PRIORITY 5 AND PRIORITY 6
 21.1 What is implemented and verified
 
-Element	Status
-app/core/vault.py get_jwt_secret()	Verified (32 bytes, kid=v2, no rotation)
-Vault KV secret secret/data/securebiz/jwt	Present (version 3, never displayed)
-app/core/jwt.py create_access_token	Verified (HS256, kid, claims)
-app/core/jwt.py verify_access_token	Verified (18/18 tests)
-app/services/refresh.py	Rewritten (advisory locks, RefreshTokenError, RefreshTokenDatabaseError, revoke_family, revoke_family_by_raw_token)
-app/schemas/auth.py	Created (LoginRequest with EmailStr, TokenResponse)
-app/api/routes/auth.py	Created (/auth/login, /auth/refresh, /auth/logout)
-app/api/dependencies.py	Extended (UserContext, get_current_user, get_authenticated_tenant_context)
-app/api/routes/users.py	Migrated to get_authenticated_tenant_context (Priority 6)
-app/api/routes/organizations.py	Migrated to get_authenticated_tenant_context (Priority 6)
-app/api/routes/roles.py	Migrated to get_authenticated_tenant_context (Priority 6)
-tests/test_isolation.py	Rewritten with httpx.AsyncClient + ASGITransport, 4 tests, asserted logout cleanup (Priority 6)
-app/main.py	auth_router registered (8 paths verified)
-requirements.txt	PyJWT==2.10.1, argon2-cffi==25.1.0, email-validator==2.2.0 added
-Packages in running container	PyJWT 2.10.1, argon2-cffi 25.1.0, email-validator 2.2.0, httpx 0.28.1
-Packages persisted in image	YES (rebuilt 12 November 2026, verified with docker run --rm)
-auth_private.credentials	1 row (test credential, Argon2id)
-auth_session.refresh_tokens	11 rows, 0 active (all revoked)
-auth_session active_tokens	0
-public.users	1 row (status = active)
-Priority 5 tests	P1-P8 (8/8) + P11 (1/1) all passed
-Priority 6 tests	F2 4/4 passed
-Git commit of Priority 5	Done (158aeb4)
-Git commit of Priority 6	Done (a65f27b)
-Git push of Priority 5 and Priority 6	Done (origin/main on a65f27b)
+Element    Status
+app/core/vault.py get_jwt_secret()    Verified (32 bytes, version 3 after re-provisioning)
+Vault KV secret secret/data/securebiz/jwt    Present (version 3, never displayed)
+app/core/jwt.py create_access_token    Verified (HS256, kid, claims)
+app/core/jwt.py verify_access_token    Verified (18/18 tests)
+app/services/refresh.py    Rewritten (advisory locks, RefreshTokenError, RefreshTokenDatabaseError, revoke_family, revoke_family_by_raw_token)
+app/schemas/auth.py    Created (LoginRequest with EmailStr, TokenResponse)
+app/api/routes/auth.py    Created (/auth/login, /auth/refresh, /auth/logout)
+app/api/dependencies.py    Extended (UserContext, get_current_user, get_authenticated_tenant_context)
+app/api/routes/users.py    Migrated to get_authenticated_tenant_context (Priority 6)
+app/api/routes/organizations.py    Migrated to get_authenticated_tenant_context (Priority 6)
+app/api/routes/roles.py    Migrated to get_authenticated_tenant_context (Priority 6)
+tests/test_isolation.py    Rewritten with httpx.AsyncClient + ASGITransport, 4 tests, asserted logout cleanup (Priority 6)
+app/main.py    auth_router registered (8 paths verified)
+requirements.txt    PyJWT==2.10.1, argon2-cffi==25.1.0, email-validator==2.2.0 added
+Packages in running container    PyJWT 2.10.1, argon2-cffi 25.1.0, email-validator 2.2.0, httpx 0.28.1
+Packages persisted in image    YES (rebuilt 12 November 2026, verified with docker run --rm)
+auth_private.credentials    1 row (test credential, Argon2id)
+auth_session.refresh_tokens    11 rows, 0 active (all revoked)
+auth_session active_tokens    0
+public.users    1 row (status = active)
+Priority 5 tests    P1-P8 (8/8) + P11 (1/1) all passed
+Priority 6 tests    F2 4/4 passed
+Priority 8 tests    End-to-end provisioning test passed (1/1)
+Git commit of Priority 5    Done (158aeb4)
+Git commit of Priority 5 documentation    Done (ff7d60a)
+Git commit of Priority 6    Done (a65f27b)
+Git commit of Priority 8    Done (83071f1)
+Git push of all commits    Done (origin/main on 83071f1)
+Migration 003 applied    securebiz_provisioner created (NOLOGIN, then activated)
+Vault policy provisioner-read    Applied (read on secret/data/securebiz/provisioner)
+Vault token provisioner-script    Created (8h TTL, read-only)
+scripts/set_provisioner_password.py    Created, env-aware, fail-safe rollback
+scripts/provision_user.py    Created, Argon2id params confirmed against auth.py
+Provisioning test (provision_user.py)    Passed end-to-end (login 200)
 
 21.2 What is NOT implemented
 
-Element	Status
-Provisioning endpoint / script for Argon2id hashes	Pending — Priority 8
-state_check.py extension for auth_session.refresh_tokens and get_user_status	Pending — Priority 9
-Runtime tenant-isolation tests under JWT for /users and /roles	Pending — Priority 9 (only /organizations/me is covered by F2)
-Full transaction lifecycle tests (cleanup failure, commit failure, rollback failure, connection close on each path)	Pending — Priority 9
-Removal of get_tenant_context (dead code)	Open — retained for backward compatibility per Priority 6 step 8
-.gitattributes CRLF policy	Pending — hygiene, Priority 10
+Element    Status
+state_check.py extension for auth_session.refresh_tokens and get_user_status    Pending — Priority 9
+Runtime tenant-isolation tests under JWT for /users and /roles    Pending — Priority 9 (only /organizations/me is covered by F2)
+Full transaction lifecycle tests (cleanup failure, commit failure, rollback failure, connection close on each path)    Pending — Priority 9
+Removal of get_tenant_context (dead code)    Open — retained for backward compatibility per Priority 6 step 8
+.gitattributes CRLF policy    Pending — Priority 10
+Vault inmem persistence    Open — secrets lost on restart, re-provisioning manual
+Audit table for provisioning    Pending — v2 of Priority 8
+--reset option in provision_user.py    Pending — v2 of Priority 8
+
 
 21.3 Provisioning searches already performed
 Repository-wide searches for INSERT INTO users, INSERT INTO memberships, create_user, create_membership, provision_user, seed_user, seed_data, create_organization returned nothing. Migration inspection confirmed no user/organization/membership provisioning routine. Git history confirmed no committed INSERT statement.
@@ -2511,15 +2682,56 @@ v13 additions (unchanged):
 - users_status_check allows only 'active', 'disabled', 'pending'.
 - The API image builds can fail on PyPI timeout. Mitigation: increase pip timeout/retries in Dockerfile, or use a PyPI mirror, or verify Docker MTU.
 
-v14 additions (new):
-- The static guard Contains("TestClient") matches docstrings. Reformulate docstrings or restrict the guard to executable lines.
-- _logout() in a finally block must assert its response (status_code == 200 and status == "logged out"). Otherwise a 503 from /auth/logout is silently swallowed and an active session leaks.
-- Any test that calls /auth/login creates a refresh-token family and must revoke it via /auth/logout in a finally block with an explicit Cookie header.
-- revoke_family(family_id) is a silent no-op on an unknown family. Safe to call in a loop.
-- WriteAllText without BOM removes an existing UTF-8 BOM. Cosmetic for Python 3, but visible in diffs.
-- git core.autocrlf emits LF/CRLF warnings on Windows. Not a failure. A .gitattributes policy is out of scope for Priority 6.
-- get_tenant_context remains defined in app/api/dependencies.py but is no longer imported by any route. It is dead code retained for backward compatibility per Priority 6 step 8. Its removal is open.
-- Public.permissions is not read by app_has_permission (already noted in v13 §8.4 and §12.2). Confirmed by the absence of an owner SELECT privilege on this table.
+v14 additions (unchanged):
+- The static guard Contains("TestClient") matches docstrings. Reformulate
+  docstrings or restrict the guard to executable lines.
+- _logout() in a finally block must assert its response (status_code == 200
+  and status == "logged out"). Otherwise a 503 from /auth/logout is
+  silently swallowed and an active session leaks.
+- Any test that calls /auth/login creates a refresh-token family and must
+  revoke it via /auth/logout in a finally block with an explicit Cookie
+  header.
+- revoke_family(family_id) is a silent no-op on an unknown family. Safe to
+  call in a loop.
+- WriteAllText without BOM removes an existing UTF-8 BOM. Cosmetic for
+  Python 3, but visible in diffs.
+- git core.autocrlf emits LF/CRLF warnings on Windows. Not a failure.
+- get_tenant_context remains defined in app/api/dependencies.py but is no
+  longer imported by any route. Dead code retained for backward
+  compatibility per Priority 6 step 8.
+- Public.permissions is not read by app_has_permission.
+
+v14.1 additions (new in Priority 8):
+
+- Migration 003 created securebiz_provisioner with NOLOGIN, NOSUPERUSER,
+  NOCREATEDB, NOCREATEROLE, NOINHERIT, NOREPLICATION, NOBYPASSRLS.
+- The role was granted USAGE on auth_private and INSERT on
+  auth_private.credentials only.
+- The role was initially NOLOGIN (fail-closed), then activated via
+  ALTER ROLE securebiz_provisioner WITH LOGIN PASSWORD '<Vault value>'.
+- The activation script set_provisioner_password.py is fail-safe: any
+  verification failure triggers rollback_to_nologin() with confirmation.
+- The activation script uses psycopg.sql.Identifier and psycopg.sql.Literal
+  to avoid SQL injection in ALTER ROLE.
+- The Vault policy provisioner-read grants only read on
+  secret/data/securebiz/provisioner. No write, list, or delete capability.
+- The Vault token provisioner-script has TTL 8h, max 24h, renewable, and
+  only the provisioner-read policy (plus default).
+- The provisioning script provision_user.py uses the same Argon2id
+  parameters as app/api/routes/auth.py (single source of truth).
+- The provisioning script is env-aware (VAULT_ADDR, DB_HOST, DB_PORT,
+  DB_NAME) with Docker-internal defaults, and must be executed inside
+  securebiz-api.
+- The provisioning script translates PostgreSQL errors:
+    unique_violation -> "credential already exists"
+    foreign_key_violation -> "user_id does not exist"
+    insufficient_privilege -> "role misconfigured"
+    other -> generic database error, no SQL detail.
+- End-to-end test passed: provisioned a throwaway user, login returned 200
+  with access_token, cleanup succeeded.
+- The securebiz_user password was reset to a 48-character
+  cryptographically-safe value, synchronized between PostgreSQL and .env.
+- Working tree is clean, 5 commits, origin/main aligned on 83071f1.
 
 25. CURRENT INVESTIGATION STATUS
 Investigation	Actual status
@@ -2591,33 +2803,68 @@ Refresh-token store cleanup	Completed — 11 total, 0 active
 Pre-existing residues revoked via service layer	Completed — 7 families revoked via revoke_family
 Backup files removed	Completed — 3 F1 + 1 F2
 
+v14.1 additions (new in Priority 8):
+Migration 003 applied    Completed — securebiz_provisioner created
+Vault policy provisioner-read    Completed — applied and verified
+Vault token provisioner-script    Completed — 8h TTL, read-only
+scripts/set_provisioner_password.py    Completed — fail-safe, env-aware
+scripts/provision_user.py    Completed — Argon2id params confirmed
+Provisioning end-to-end test    Completed — login 200 with access_token
+JWT secret re-provisioned    Completed — version 3 (crypto-safe)
+Provisioner secret re-provisioned    Completed — version 1
+securebiz_user password reset    Completed — 48 chars, synchronized
+Git commit of Priority 8    Completed — 83071f1
+Git push of Priority 8    Completed — origin/main on 83071f1
+Working tree clean    Completed — git status --short empty
+
 Pending:
-Provisioning endpoint for Argon2id hashes	PENDING — Priority 8
-state_check.py extension (auth_session, get_user_status, credentials)	PENDING — Priority 9
-Runtime tenant-isolation tests under JWT for /users and /roles	PENDING — Priority 9
-Full transaction lifecycle tests	PENDING — Priority 9
-Removal of dead get_tenant_context	OPEN — retained for backward compatibility
-.gitattributes CRLF policy	PENDING — Priority 10
-app/main.py lifespan migration (on_event deprecated)	PENDING — Priority 10
+state_check.py extension (auth_session, get_user_status, credentials)    PENDING — Priority 9
+Runtime tenant-isolation tests under JWT for /users and /roles    PENDING — Priority 9
+Full transaction lifecycle tests    PENDING — Priority 9
+Provisioning script unit tests in tests/    PENDING — Priority 9
+Removal of dead get_tenant_context    OPEN — Priority 10
+.gitattributes CRLF policy    PENDING — Priority 10
+app/main.py lifespan migration (on_event deprecated)    PENDING — Priority 10
+Vault inmem persistence    OPEN — v15 automation or backend change
+--reset option in provision_user.py    PENDING — v2 of Priority 8
+Audit table for provisioning    PENDING — v2 of Priority 8
 
 26. NEXT PRIORITIES
 
-Priority 8 — Provisioning endpoint or script for Argon2id hashes (next)
-Objective: create a controlled way to provision new users with Argon2id password hashes.
+Priority 8 — Provisioning endpoint or script for Argon2id hashes (CLOSED)
 
-Constraints:
-- Hash must use the same parameters as auth.py (PasswordHasher with time_cost=2, memory_cost=19456, parallelism=1, hash_len=32, salt_len=16).
-- Insert into auth_private.credentials (via securebiz_user or a dedicated provisioning role).
-- Do NOT use securebiz_auth (no INSERT privilege on credentials).
-- Audit log required (who created which user, when).
-- Never log or return the hash.
+Status: CLOSED on 12 November 2026 (commit 83071f1).
 
-Design decisions to make:
-- Endpoint (POST /admin/users) or script (scripts/provision_user.py)?
-- Who can invoke it? (No admin role defined yet.)
-- How does the plaintext password reach the provisioner? (Manual entry, or generated, or SMTP invite flow?)
+What was implemented:
+- Migration 003: securebiz_provisioner role (NOLOGIN, INSERT only).
+- Vault policy provisioner-read (read on secret/data/securebiz/provisioner).
+- scripts/set_provisioner_password.py: one-shot bootstrap.
+- scripts/provision_user.py: Argon2id credential provisioning.
+- End-to-end test: provisioned a throwaway user, login 200, cleanup.
 
-This is a non-trivial design. A dedicated priority is required.
+Argon2id parameters (confirmed against app/api/routes/auth.py):
+  time_cost=2, memory_cost=19456, parallelism=1, hash_len=32, salt_len=16.
+
+Priority 9 — Tests and state_check extension (next)
+- Unit tests for refresh.py: P1-P8 and P11 done manually, but not in tests/.
+- Integration tests for /auth/*: manual only.
+- Tenant isolation tests under JWT for /users and /roles (F2 covers
+  /organizations/me only).
+- Unit tests for scripts/provision_user.py (success, duplicate, missing user).
+- Full transaction lifecycle tests: cleanup failure, commit failure,
+  rollback failure, connection close on each path.
+- Extend scripts/state_check.py to check:
+  - auth_session.refresh_tokens (table exists, count, active=0)
+  - auth_session.get_user_status (EXECUTE ACL, behavior)
+  - auth_private.credentials (count, no hash leaked)
+  - securebiz_provisioner role (attributes, privileges)
+
+Priority 10 — Hygiene and deprecations
+- Add .gitattributes to formalize the LF/CRLF policy.
+- Add .env.backup-* and *.bak-* to .gitignore.
+- Migrate @app.on_event("startup") to lifespan= in app/main.py.
+- Evaluate removal of get_tenant_context (dead code).
+- Migrate init_vault_key() to a separate administrative path.
 
 Priority 9 — Tests and state_check extension
 - Unit tests for refresh.py: P1-P8 and P11 done manually, but not in tests/.
@@ -2709,18 +2956,38 @@ v13 pitfalls (unchanged):
 - Do not log the token, the secret, the password hash, the user_id, or the jti in authentication logs.
 - Do not use cookies.set() to simulate replay.
 
-v14 pitfalls (new):
-- Do not use naive Contains() guards in PowerShell if the file may contain a matching docstring. Reformulate the docstring or restrict the guard.
-- Do not call _logout() in a finally without asserting its response. A 503 must fail the test.
-- Do not create a refresh-token family without revoking it. Every /auth/login in a test must be paired with a /auth/logout in finally.
-- Do not DELETE rows from auth_session.refresh_tokens. Revocation is by UPDATE revoked_at, via the service layer.
-- Do not assume revoke_family raises on an unknown family. It is a silent no-op.
-- Do not assume WriteAllText preserves an existing UTF-8 BOM. It does not if the encoding is UTF-8 without BOM.
-- Do not treat the git LF/CRLF warning as a failure.
-- Do not assume that because Priority 5 is committed, Priority 6 is also committed. Verify git log.
-- Do not assume the running container is on the latest image. Compare docker inspect securebiz-api image ID with docker images :latest ID.
-- Do not remove get_tenant_context without first confirming that no internal caller or test uses it.
-- Do not use httpx2 in a new test unless TestClient is genuinely required.
+v14.1 pitfalls (new in Priority 8):
+- Do not assume the .env POSTGRES_PASSWORD matches the PostgreSQL role
+  password. They can diverge (e.g., after a manual ALTER ROLE that did not
+  update .env). Always verify with a SCRAM connection test from
+  securebiz-api (psycopg, host='db', port=5432), not via socket Unix
+  (trust).
+- Do not use Get-Content -Raw + -replace + WriteAllText to rewrite .env.
+  The combination can leave the file in an inconsistent state (wrong line
+  endings, duplicated entries). Use [System.IO.File]::ReadAllText +
+  [regex]::Split + manual reconstruction + WriteAllText, and verify the
+  round-trip (exact match, single occurrence).
+- Do not use Get-Random to generate a JWT secret. Use
+  RandomNumberGenerator (PowerShell) or secrets.token_hex (Python).
+- Do not assume Vault dev mode persists secrets across restarts. It does
+  not (inmem storage). Re-provisioning is manual.
+- Do not assume Docker-internal DNS names (vault:8200, db:5432) are
+  reachable from the Windows host. They are only reachable from inside the
+  Docker network. Scripts must be executed inside securebiz-api.
+- Do not use provisioner-script token for the bootstrap
+  (set_provisioner_password.py). Use the root token for the one-shot
+  bootstrap, and provisioner-script only for recurring provisioning.
+- Do not use email domains that are reserved by RFC 6762 (e.g., .local) in
+  test users. email-validator (used by LoginRequest with EmailStr) rejects
+  them. Use example.com (RFC 2606) for tests.
+- Do not pass Vault tokens or database passwords via docker exec -e in
+  production. Use mounted files or a secret manager. The -e approach is
+  acceptable for the lab only.
+- Do not assume a NOLOGIN role cannot be used. It can be activated with
+  ALTER ROLE ... WITH LOGIN. The fail-closed protection is NOLOGIN, not
+  PASSWORD NULL.
+- Do not commit .env or .env.backup-* files. They contain secrets. Add
+  them to .gitignore if not already present.
 
 28. EXACT CONTINUATION POINT — VERSION 14
 
@@ -2769,19 +3036,31 @@ Preserve all existing data, Docker volumes, database security boundaries and unr
 
 29. FINAL HANDOVER RULE
 
-Continue SecureBiz Lab from this exact Version 14 state.
+Continue SecureBiz Lab from this exact Version 14.1 state.
 
-The project has completed Priority 5 (Authentication and Session Management) and Priority 6 (IAM route migration to JWT, isolation test migration). All functional tests passed on 12 November 2026: P1-P8, P11, F2. The image has been rebuilt and the container runs from the rebuilt image. Priority 5 and Priority 6 are committed and pushed.
+The project has completed Priority 5 (Authentication and Session
+Management), Priority 6 (IAM route migration to JWT, isolation test
+migration), and Priority 8 (Argon2id provisioning: role, policy, scripts,
+end-to-end test). All functional tests passed on 12 November 2026:
+P1-P8, P11, F2, and the Priority 8 end-to-end test. The image has been
+rebuilt and the container runs from the rebuilt image. Priority 5,
+Priority 6, and Priority 8 are committed and pushed. Vault was restarted
+and all secrets were re-provisioned; the securebiz_user password was
+reset to 48 chars.
 
-The next phase is Priority 8 (provisioning endpoint or script for Argon2id hashes), preceded by the documentation of three design decisions (endpoint vs script, caller, plaintext password transport).
+The next phase is Priority 9 (extended tests and state_check extension).
 
 Do not restart the project.
 Do not repeat completed inspections.
-Do not reproduce Version 13 as if Priority 5 and Priority 6 were not implemented.
+Do not reproduce Version 13 as if Priority 5 and Priority 6 were not
+implemented.
+Do not reproduce Version 14 as if Priority 8 were not implemented.
 Do not invent implementation details.
 Do not weaken security to pass tests.
 Do not assume the rebuild is pending. It is done.
+Do not assume Vault secrets persist. They do not (inmem).
 
-Immediate next step: document the three Priority 8 design decisions, then design and implement provisioning.
+Immediate next step: start Priority 9 unit tests for refresh.py.
 
-Preserve all existing data, Docker volumes, database security boundaries and unrelated containers.
+Preserve all existing data, Docker volumes, database security boundaries
+and unrelated containers.

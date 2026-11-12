@@ -10,6 +10,36 @@ evidence is preserved in the `docs/06-tests/` directory.
 
 ---
 
+## [v0.5.0] - 2026-11-12 (evening) — Priority 8: Argon2id provisioning
+
+### Added
+- PostgreSQL role `securebiz_provisioner` (NOLOGIN initially, INSERT-only
+  on `auth_private.credentials`), created by migration
+  `003_provisioner_role.sql`.
+- Vault policy `provisioner-read` (read-only on
+  `secret/data/securebiz/provisioner`), stored in
+  `vault/policies/provisioner-read.hcl`.
+- Script `scripts/set_provisioner_password.py`: one-shot bootstrap that
+  reads the provisioner password from Vault and executes
+  `ALTER ROLE securebiz_provisioner WITH LOGIN PASSWORD`. Fail-safe:
+  any verification failure triggers `rollback_to_nologin()` with
+  confirmation.
+- Script `scripts/provision_user.py`: Argon2id credential provisioning
+  using the `provisioner-script` Vault token (read-only), same Argon2id
+  parameters as `app/api/routes/auth.py`.
+- End-to-end provisioning test: throwaway user, login 200 with
+  access_token, cleanup.
+
+### Changed
+- `POSTGRES_PASSWORD` in `.env` and PostgreSQL reset to a 48-character
+  cryptographically-safe value (synchronized, SCRAM verified).
+- Vault re-provisioned after container restart (inmem storage): JWT
+  secret v3, provisioner secret v1, policy, token.
+
+### Fixed
+- API crash loop on `init_vault_key()` due to Vault container stopped
+  (ExitCode 255, Docker DNS name `vault` not resolving).
+
 ## [0.4.0] — 2026-11-12
 
 ### Added

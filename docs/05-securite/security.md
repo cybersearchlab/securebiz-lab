@@ -31,6 +31,7 @@ distinguishes **verified controls** from **planned controls**.
 | `securebiz_app` SQL Role | Created (no elevated privileges, no `BYPASSRLS`) |
 | `securebiz_owner` SQL Role | Created (NOLOGIN, no `BYPASSRLS`, owns security functions) |
 | `securebiz_auth` SQL Role | Created (LOGIN, no elevated privileges) |
+| `securebiz_provisioner` SQL Role | **Created** (LOGIN, INSERT only on `auth_private.credentials`, no SELECT/UPDATE/DELETE, no `BYPASSRLS`) |
 | Minimal privileges for `securebiz_app` | **Granted** (migration V8) |
 | Multi-tenant RLS Isolation | **Enabled and forced** on all tenant-scoped tables |
 | RBAC in SQL | **In place** (`app_has_permission()`) |
@@ -43,12 +44,15 @@ distinguishes **verified controls** from **planned controls**.
 | Argon2id password verification | **In place** (`argon2-cffi==25.1.0`, `time_cost=2`, `memory_cost=19456`) |
 | Refresh token rotation and reuse detection | **In place** (`app/services/refresh.py`, advisory lock per family) |
 | API authentication (`/auth/login`, `/auth/refresh`, `/auth/logout`) | **In place** (9/9 functional tests) |
-| JWT dependencies (`get_current_user`, `get_authenticated_tenant_context`) | **In place** (implemented, not yet used by IAM routes) |
-| IAM routes migrated to JWT | **Planned** (Priority 6) |
-| Permission-based authorization (route-level middleware) | Planned |
-| Provisioning endpoint (Argon2id hashes) | Planned |
+| JWT dependencies (`get_current_user`, `get_authenticated_tenant_context`) | **In place** and **used** by all three IAM routes (Priority 6) |
+| IAM routes migrated to JWT | **In place** (Priority 6, commit `a65f27b`) |
+| Tenant isolation tests under JWT | **In place** (`tests/test_isolation.py`, 4/4 passed) |
+| Vault provisioning policy | **In place** (`provisioner-read`, read-only on `secret/data/securebiz/provisioner`) |
+| Argon2id provisioning scripts | **In place** (`scripts/set_provisioner_password.py`, `scripts/provision_user.py`, end-to-end test passed) |
+| Provisioning credentials storage | **In place** (Vault KV-v2, never in `.env` or git) |
+| Permission-based authorization (route-level middleware) | Planned (RLS enforces at DB level; no route middleware yet) |
 | Audit Log | Planned |
-| Automated Security Tests | Planned (Pytest) |
+| Automated Security Tests | **Partial** (Priority 6 isolation tests in `tests/`; Priority 5 and Priority 8 tests are manual only) |
 | CI/CD with Security Checks | Planned |
 
 ## Verified Cryptographic Flow

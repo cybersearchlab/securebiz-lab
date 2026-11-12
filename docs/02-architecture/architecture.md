@@ -37,6 +37,90 @@ When the API issues or verifies a JWT, `get_jwt_secret()` reads the HS256 secret
 
 The Vault KV secret supports rotation via `current`/`current_kid` and `previous`/`previous_kid`. The JWT verifier accepts both `current_kid` and `previous_kid`, so a rotation window is possible.
 
+### 2.4 Provisioning flow (v0.5.0)
+
+Priority 8 introduced a dedicated provisioning workflow for creating Argon2id
+credentials. It is separated from the API runtime: the API cannot write to
+`auth_private.credentials`, and the provisioning role is not used by the
+FastAPI application.
+
+#### Actors
+
+| Actor | Responsibility |
+| :--- | :--- |
+| `securebiz_provisioner` | Dedicated PostgreSQL role. `INSERT` only on `auth_private.credentials`. No `SELECT`, `UPDATE`, `DELETE`. Not used by the API. |
+| Vault KV-v2 | Stores the provisioner database password at `secret/data/securebiz/provisioner` (key `db_password`). |
+| Vault policy `provisioner-read` | Grants `read` only on the provisioner secret path. Attached to a dedicated token (`provisioner-script`, TTL 8h, max 24h). |
+| `scripts/set_provisioner_password.py` | One-shot bootstrap. Reads the provisioner password from Vault (root token), then executes `ALTER ROLE securebiz_provisioner WITH LOGIN PASSWORD`. Fail-safe: any verification failure triggers `rollback_to_nologin()`. |
+| `scripts/provision_user.py` | Recurring provisioning. Uses the `provisioner-script` token, reads the password from Vault, hashes the new user password with Argon2id, and inserts the credential as `securebiz_provisioner`. |
+
+#### Flow
+
+text
+Operator (Windows host or inside securebiz-api)
+  |
+  v
+scripts/provision_user.py
+  |  (1) read VAULT_TOKEN from environment (provisioner-script token)
+  |  (2) GET secret/data/securebiz/provisioner -> db_password
+  |  (3) getpass or --generate -> plain password
+  |  (4) Argon2id hash (same params as app/api/routes/auth.py)
+  |  (5) INSERT INTO auth_private.credentials (user_id, password_hash)
+  |      as securebiz_provisioner (host=db, port=5432)
+  v
+PostgreSQL (auth_private.credentials)
+  |
+  v
+(optional) POST /auth/login -> 200 with access_token
+
+#### Execution context
+
+The provisioning scripts use the Docker-internal DNS names (`vault:8200`,
+`db:5432`). They MUST be executed inside the `securebiz-api` container:
+
+text
+docker cp scripts/provision_user.py securebiz-api:/tmp/provision_user.py
+docker exec -it -e VAULT_TOKEN=<provisioner-script-token> \
+    -w /app securebiz-api python /tmp/provision_user.py --user-id <uuid> [--generate]
+docker exec securebiz-api rm -f /tmp/provision_user.py
+
+The Windows host cannot reach `vault:8200` or `db:5432` directly (Docker
+Desktop WSL2 networking). Host execution is not supported.
+
+#### Argon2id parameters
+
+The provisioning script uses the same parameters as
+`app/api/routes/auth.py` (single source of truth):
+
+python
+PasswordHasher(
+    time_cost=2,
+    memory_cost=19456,
+    parallelism=1,
+    hash_len=32,
+    salt_len=16,
+)
+
+#### Security properties
+
+- The provisioner database password never leaves Vault.
+- The new user password is never logged or displayed (except with
+  `--generate`, where it is shown once on stdout with a warning).
+- The password hash is never logged or displayed.
+- PostgreSQL errors are translated to generic messages:
+  `unique_violation` → credential already exists,
+  `foreign_key_violation` → user_id does not exist,
+  `insufficient_privilege` → role misconfigured,
+  other → generic database error.
+- The role `securebiz_provisioner` is created `NOLOGIN` (fail-closed) and
+  activated only via the bootstrap script.
+
+#### Known limitation
+
+Vault runs in dev mode with `inmem` storage. A restart of the Vault
+container loses all secrets (JWT, provisioner password, policy, token).
+Re-provisioning is currently manual.
+
 ## 3. Code Organization
 
 -   `app/main.py`: FastAPI entry point, base routes, and startup events. Registers `organizations_router`, `users_router`, `roles_router`, `auth_router`.
