@@ -15,8 +15,11 @@ PostgreSQL database.
 -   **Data Security**: PostgreSQL privileges, separation of duties,
     migrations, and auditing.
 -   **Multi-tenancy**: Data isolation between organizations.
--   **Cryptography**: Ed25519 asymmetric signatures, Vault Transit, and
-    PostgreSQL `pgsodium` verification.
+-   **Cryptography**: Ed25519 asymmetric signatures, Vault Transit,
+    PostgreSQL `pgsodium` verification, and HS256 JWT with a secret stored
+    in Vault KV-v2.
+-   **Authentication**: Argon2id password verification, opaque refresh
+    tokens with rotation and reuse detection.
 -   **Infrastructure Security**: Containers, configuration, secrets management,
     and network isolation.
 -   **DevSecOps**: Automated testing and security checks integrated into
@@ -38,13 +41,21 @@ The currently verified foundation includes:
   (`pydantic-settings`, fail-fast on missing variables).
 - **Database**: PostgreSQL 16 running in a custom Docker image
   (with `pgsodium 3.1.9` compiled in).
-- **Cryptography**: HashiCorp Vault 1.20 (Transit engine) with a
-  non-exportable Ed25519 private key. The private key **never leaves Vault**.
-- **IAM Schema**: 7 business tables + 2 private schemas (`auth_private`,
-  `auth_security`) applied via `001_iam_multitenant_v8.sql`.
+- **Cryptography (tenant context)**: HashiCorp Vault 1.20 (Transit engine)
+  with a non-exportable Ed25519 private key. The private key **never leaves Vault**.
+- **Cryptography (JWT)**: HS256 access tokens (PyJWT 2.10.1), secret stored
+  in Vault KV-v2 at `secret/data/securebiz/jwt`. The secret is never written
+  to `.env`, source code, or logs.
+- **Authentication**: Argon2id password verification (`argon2-cffi 25.1.0`),
+  JWT issuance and verification, opaque refresh tokens with SHA-256 storage,
+  rotation on every use, reuse detection with family revocation, HttpOnly
+  Secure SameSite=Strict cookie.
+- **IAM Schema**: 7 business tables + 3 private schemas (`auth_private`,
+  `auth_security`, `auth_session`) applied via `001_iam_multitenant_v8.sql`
+  and `002_auth_session.sql`.
 - **Multi-tenant Isolation**: `FORCE ROW LEVEL SECURITY` on all
-  tenant-scoped tables, with RBAC enforced both in FastAPI (future) and
-  in SQL (`app_has_permission()`).
+  tenant-scoped tables, with RBAC enforced in SQL (`app_has_permission()`).
+  JWT-based route-level RBAC is planned (Priority 6).
 - **Orchestration**: Docker Compose (3 services: `api`, `db`, `vault`).
 
 ### Validated end-to-end
@@ -62,14 +73,36 @@ The cryptographic chain has been **proven by a real test** executed with
 5.  Transaction is rolled back (test data not persisted).
 
 This is documented in `CHANGELOG.md` (v0.3.0) and
-`docs/02-architecture/architecture.md`.
+`docs/02-architecture/architecture.md` §4.
+
+### Validated authentication (v0.4.0)
+
+The authentication chain has been **proven by 9/9 functional tests**:
+
+1.  `POST /auth/login` verifies email + password (Argon2id), checks user status,
+    issues an HS256 JWT and a refresh cookie (HttpOnly, Secure, SameSite=Strict,
+    Path=/auth, Max-Age=604800).
+2.  `POST /auth/refresh` rotates the refresh token (new cookie, same family_id),
+    re-checks the user status, and issues a new JWT. A disabled user's family
+    is revoked and the request returns 401.
+3.  Replaying a revoked refresh token returns 401 and revokes the entire family.
+4.  `POST /auth/logout` revokes the family and clears the cookie (idempotent).
+5.  All tests verified in DB: `credentials=1`, `refresh_tokens=0`,
+    `active_tokens=0`, `user=active`.
+
+This is documented in `CHANGELOG.md` (v0.4.0) and
+`docs/06-tests/verifications.md` §6–§13.
 
 ### Not yet delivered
 
-- FastAPI business routes (`/organizations`, `/users`, `/roles`).
-- Authentication flow (login, Argon2 hashing, JWT emission).
-- Automated multi-tenant isolation tests (Pytest).
-- Automated Ed25519 key rotation.
+- FastAPI IAM routes migrated to JWT (`/organizations`, `/users`, `/roles`
+  still use debug headers — Priority 6).
+- Route-level RBAC middleware (JWT permission checks at the route level).
+- Provisioning endpoint or script for Argon2id password hashes.
+- Automated multi-tenant isolation tests under JWT (Pytest).
+- Automated Ed25519 and JWT secret rotation.
+- `scripts/state_check.py` extension for `auth_session.refresh_tokens`,
+  `get_user_status`, `auth_private.credentials`.
 - CI/CD pipeline with DevSecOps checks.
 
 ## Documentation Rule
