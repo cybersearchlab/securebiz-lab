@@ -1,10 +1,5 @@
-Handover v13 — Message 1 sur 3 : §1 à §14
-Voici le contenu à coller dans ton fichier MASTER HANDOVER PROMPT — SECUREBIZ LAB v13.txt. Aucun #, aucun " dans le texte lui-même — style du v12.
-
-text
 MASTER HANDOVER PROMPT — SECUREBIZ LAB
-Version 13 — Priority 5 Complete (Authentication and Session Management), 
-Rebuild Image Pending, and Readiness for Priority 6 (Route Migration)
+Version 14 — Priority 5 and Priority 6 Complete, Image Rebuilt, Session Store Clean, and Readiness for Priority 8 (Provisioning)
 Snapshot date: 12 November 2026
 Project directory: C:\Users\nguey\Documents\SecureBiz-Lab
 Environment: Windows 11, PowerShell (5.1), Docker Desktop with WSL2, Python 3.12 in the API container, PostgreSQL 16, FastAPI, psycopg, HashiCorp Vault 1.20 (dev mode), pgsodium 3.1.9.
@@ -12,17 +7,20 @@ Environment: Windows 11, PowerShell (5.1), Docker Desktop with WSL2, Python 3.12
 1. PURPOSE AND OPERATING INSTRUCTIONS
 You are taking over an ongoing technical and security engineering project named SecureBiz Lab.
 
-This document is the consolidated Version 13 handover. It supersedes Version 12.
+This document is the consolidated Version 14 handover. It supersedes Version 13.
 
 It incorporates:
 
 The complete Priority 5 implementation (JWT authentication, refresh tokens, authentication routes, authenticated dependencies).
-All 9 functional tests passed on 12 November 2026 (P1-P8 and P11).
-The 8 operational and technical corrections discovered during Priority 5.
-The current state: Priority 5 is CLOSED, the rebuild of the API image is PENDING (critical technical debt).
-The exact continuation point: Priority 6 (migration of IAM routes to JWT) or Priority 7 (rebuild).
+The complete Priority 6 implementation (migration of IAM routes to JWT authentication, migration of the isolation test to httpx.AsyncClient + ASGITransport).
+The rebuild of the API image, now persisted with all Priority 5 packages.
+The cleanup of the refresh-token store after the functional tests.
+All functional test results: 9/9 for Priority 5 (P1-P8 and P11), 4/4 for Priority 6 (F2).
+The 8 operational and technical corrections discovered during Priority 5, and the 7 additional corrections discovered during Priority 6.
+The current git state: 4 commits, origin/main aligned on a65f27b.
+The exact continuation point: Priority 8 (provisioning endpoint or script for Argon2id hashes), followed by Priority 9 (extended tests and state_check extension).
 
-Do not restart the project from Version 12. Do not repeat completed inspections. Do not treat a proposed architecture as implemented merely because it has been discussed.
+Do not restart the project from Version 13. Do not repeat completed inspections. Do not treat a proposed architecture as implemented merely because it has been discussed.
 
 The purpose is to continue from the actual state of the project, not from an earlier proposed inspection plan.
 
@@ -92,8 +90,7 @@ kboutscan-dev-redis — port 6379.
 
 SecureBiz PostgreSQL uses host port 5433, mapped to container port 5432.
 
-1.4 New operational pitfalls introduced in v13
-In addition to the v12 pitfalls (Add-Content without trailing newline, [Convert]::ToHexString absence, Set-Clipboard failure, VAULT_DEV_ROOT_TOKEN static), Version 13 introduces the following corrections, all verified on 12 November 2026:
+1.4 Operational pitfalls — consolidated list (v12, v13, v14)
 
 1.4.1 httpx.ASGITransport does NOT inject cookies set via cookies.set()
 When using httpx.AsyncClient or httpx2.AsyncClient with ASGITransport(app=app), cookies added via client.cookies.set(...) are stored in the jar but NOT sent in the Cookie header of subsequent requests.
@@ -104,6 +101,7 @@ This is a known limitation of the ASGI transport in both packages. TestClient of
 1.4.2 TestClient requires httpx2
 fastapi.testclient.TestClient imports starlette.testclient which raises RuntimeError if httpx2 is not installed. httpx2 is a separate package from httpx (version 2.16.0, with httpcore2 and truststore). Installing httpx2 via pip install httpx2 was needed.
 Both httpx and httpx2 have the cookie limitation described in 1.4.1. Using httpx.AsyncClient directly with explicit Cookie header avoids the dependency on httpx2 for tests. httpx2 remains needed only if TestClient is used.
+New in v14: tests/test_isolation.py uses httpx.AsyncClient directly, not TestClient. httpx2 remains installed in the image for compatibility but is not required by the current test suite.
 
 1.4.3 $LASTEXITCODE is unreliable for docker exec psql and docker cp
 PowerShell sets $LASTEXITCODE to 1 when a native command writes to stderr, even if the command succeeded. psql writes banners and warnings to stderr. docker cp writes "Successfully copied" to stderr. docker exec relays stderr.
@@ -141,7 +139,35 @@ Rule: always execute function Invoke-BlockX { ... } Invoke-BlockX as a single at
 
 1.4.8 docker compose build api is safe but can time out on PyPI
 docker compose build api only builds an image. It does not modify docker-compose.yml, Dockerfile, requirements.txt, .env, containers, or volumes. It reads requirements.txt and runs pip install inside the Docker build.
-PyPI timeouts (ReadTimeoutError on files.pythonhosted.org) are transitory on WSL2. Retry usually succeeds.
+PyPI timeouts (ReadTimeoutError on files.pythonhosted.org) are transitory on WSL2. Retry usually succeeds. Verified: the Priority 5 image was successfully rebuilt on 12 November 2026 despite two earlier ReadTimeoutError failures.
+
+1.4.9 New in v14 — static guards in PowerShell match docstrings, not just code
+A naive guard such as if ($writtenSource.Contains("TestClient")) { throw ... } matches the substring in docstrings and comments as well as in executable code.
+Verified during Priority 6: a rewritten tests/test_isolation.py whose docstring mentioned TestClient and httpx2 triggered the guard even though the executable code did not import either package.
+Corrective: either restrict the guard to executable lines (fragile in PowerShell), or reformulate docstrings to avoid the forbidden substrings entirely. The latter is the approach used in the final tests/test_isolation.py.
+
+1.4.10 New in v14 — _logout() in a finally block must assert its response
+If a test logs in and revokes its refresh family in a finally block, an unconditional _logout() will silently ignore a 503 from the server, leaving an active refresh family in the database.
+Verified during Priority 6: the corrected _logout() asserts response.status_code == 200 and response.json()["status"] == "logged out". A cleanup failure therefore fails the test instead of being masked by the finally block.
+
+1.4.11 New in v14 — any test that calls /auth/login creates a refresh-token family
+Each successful POST /auth/login creates a new row in auth_session.refresh_tokens with a fresh family_id.
+Verified during Priority 6: the three authenticated tests in tests/test_isolation.py created three families, all revoked via POST /auth/logout in their finally block. The test test_no_jwt_rejected creates none because it does not log in.
+Rule: every test that calls /auth/login must revoke its family via POST /auth/logout with the explicit Cookie header in a finally block.
+
+1.4.12 New in v14 — revoke_family(family_id) is a silent no-op on an unknown family
+Verified by full-body inspection of app/services/refresh.py on 12 November 2026: revoke_family acquires the family-level advisory lock, executes UPDATE ... SET revoked_at = clock_timestamp() WHERE family_id = %s AND revoked_at IS NULL, and calls conn.commit(). There is no prior SELECT. On an unknown family_id, the UPDATE affects zero rows, the COMMIT succeeds, and the function returns None.
+Consequence: revoke_family is safe to call in a loop over a list of family_id values, without per-call exception handling.
+
+1.4.13 New in v14 — WriteAllText without BOM removes an existing UTF-8 BOM
+[System.IO.File]::WriteAllText(path, text, [System.Text.UTF8Encoding]::new($false)) writes UTF-8 without BOM. If the previous file had a UTF-8 BOM, the BOM is silently removed.
+Verified during Priority 6: the four files modified in commit a65f27b had their BOM removed as a side effect of the rewrite helper. Python 3 handles BOM-less UTF-8 files correctly, so the impact is cosmetic, but the diff includes the BOM removal.
+Rule: when rewriting an existing file, either preserve the BOM if the original had one, or document the BOM removal in the commit message.
+
+1.4.14 New in v14 — git converts LF to CRLF on checkout (core.autocrlf)
+git emits warnings such as "warning: in the working copy of 'app/api/routes/roles.py', LF will be replaced by CRLF the next time Git touches it".
+This is a Windows-specific line-ending policy, not a code defect. It does not affect Python execution, psycopg, or the tests.
+Rule: do not treat this warning as a failure. If a strict line-ending policy is desired, add a .gitattributes file (out of scope for Priority 6).
 
 2. PROJECT OBJECTIVE AND TARGET SECURITY ARCHITECTURE
 SecureBiz Lab is a multi-tenant cybersecurity and business security platform.
@@ -207,7 +233,7 @@ A UUID is an identifier, not an authentication credential.
 JWT HS256 authenticates the user to the API. Vault Transit Ed25519 signs the tenant context for PostgreSQL. These two mechanisms must never be confused.
 Refresh tokens are opaque, stored hashed (SHA-256), rotated on every use, and grouped into revocable families with reuse detection.
 
-As of Version 13, the authentication portion of this chain is fully implemented and tested for the /auth/* endpoints. The IAM routes (users, organizations, roles) still use the debug-header path and will be migrated in Priority 6.
+As of Version 14, the authentication portion of this chain is fully implemented and tested for the /auth/* endpoints AND for the IAM routes (/users, /organizations/me, /roles), which now use get_authenticated_tenant_context (JWT + X-Organization-Id). The debug-header path (get_tenant_context) remains defined in app/api/dependencies.py for backward compatibility but is no longer used by the IAM routes.
 
 3. DEVELOPMENT ENVIRONMENT
 3.1 Local environment
@@ -314,42 +340,60 @@ It does not create application users, configure database passwords or implement 
 
 The presence of pgsodium does not prove Argon2id is installed or that password hashing is implemented in PostgreSQL.
 
-3.5 Image build state — new in v13
-The securebiz-lab-api:latest image (hash 4d743ef9b544, 292MB) is the v12 image.
+3.5 Image build state — REBUILT in v14 (supersedes v13 §3.5)
+The securebiz-lab-api:latest image was successfully rebuilt on 12 November 2026.
 
-The Priority 5 packages (PyJWT 2.10.1, argon2-cffi 25.1.0, email-validator 2.2.0, httpx 0.28.1, httpx2 2.16.0) were installed manually via pip install in the running container and are NOT persisted in the image.
+Verified state (12 November 2026):
 
-This is a critical technical debt: if the securebiz-api container restarts (crash, docker compose restart, Windows reboot), the packages disappear and the API crashes at startup with ModuleNotFoundError.
+Image ID: 3c0514b01d3b (sha256:3c0514b01d3bb0c031c533e4798b1b07efc5d78f07c3624da560b806344f8d7e).
+Size: 305 MB.
+Created: 12 November 2026, after the Priority 5 closure.
 
-A first attempt to rebuild (docker compose build api) failed on 12 November 2026 with ReadTimeoutError on files.pythonhosted.org. The network was subsequently verified as reachable (python:3.12-slim pull succeeded, PyPI reachable). A retry is pending.
+Packages verified inside the image (docker run --rm securebiz-lab-api ...):
 
-The required fix before Priority 6 is: docker compose build api then docker compose up -d --force-recreate api, followed by a verification of Total paths: 8 and the package versions.
+jwt 2.10.1
+argon2 25.1.0
+email-validator 2.2.0
+httpx 0.28.1
+
+Packages verified inside the running container (docker exec securebiz-api ...):
+
+jwt 2.10.1
+argon2 25.1.0
+email-validator 2.2.0
+httpx 0.28.1
+
+The container securebiz-api is running from the same image as securebiz-lab-api:latest (identical image IDs, sha256:3c0514b0...). There is no lag between the image and the container.
+
+Consequence: the critical technical debt documented in v13 §3.5 is RESOLVED. A container restart (crash, docker compose restart api, Windows reboot) will NOT lose the Priority 5 packages. A docker compose up -d --force-recreate api is now safe for the API image.
+
+The commit 158aeb4 feat(priority5): JWT auth + refresh tokens + auth routes + rebuild is the trace of this rebuild. The prior PyPI timeout failures (ReadTimeoutError) were transitory and did not block the final rebuild.
 
 4. REPOSITORY INVENTORY
 The latest recursive inventory excluded .git, .venv, caches and .env.
 
-Observed structure (updated for v13):
+Observed structure (updated for v14):
 
 text
 app/
     api/
-        dependencies.py          (modified in Priority 5)
+        dependencies.py          (modified in Priority 5, unchanged in v14)
         routes/
-            organizations.py     (unchanged, still uses get_tenant_context)
-            roles.py             (unchanged, still uses get_tenant_context)
-            users.py             (unchanged, still uses get_tenant_context)
-            auth.py              (new in Priority 5)
+            organizations.py     (modified in Priority 6 — uses get_authenticated_tenant_context)
+            roles.py             (modified in Priority 6 — uses get_authenticated_tenant_context)
+            users.py             (modified in Priority 6 — uses get_authenticated_tenant_context)
+            auth.py              (new in Priority 5, unchanged in v14)
     core/
-        config.py                (modified in Priority 5)
-        database.py              (modified in v12)
-        jwt.py                   (new in Priority 3)
-        vault.py                 (modified in Priority 2)
+        config.py                (modified in Priority 5, unchanged in v14)
+        database.py              (modified in v12, unchanged in v14)
+        jwt.py                   (new in Priority 3, unchanged in v14)
+        vault.py                 (modified in Priority 2, unchanged in v14)
     schemas/
-        auth.py                  (new in Priority 5)
+        auth.py                  (new in Priority 5, unchanged in v14)
     services/
-        context_signing.py       (unchanged)
-        refresh.py               (rewritten in Priority 4)
-    main.py                      (modified in Priority 5)
+        context_signing.py       (unchanged in v14)
+        refresh.py               (rewritten in Priority 4, unchanged in v14)
+    main.py                      (modified in Priority 5, unchanged in v14)
 
 database/
     init/
@@ -375,7 +419,7 @@ scripts/
     state_check.py
 
 tests/
-    test_isolation.py
+    test_isolation.py            (rewritten in Priority 6 — JWT + ASGITransport)
 
 docker-compose.yml
 Dockerfile
@@ -393,9 +437,9 @@ Important files:
 File	Responsibility
 app/main.py	FastAPI initialization and startup
 app/api/dependencies.py	Tenant-context dependencies (debug and JWT)
-app/api/routes/users.py	User routes (still debug headers)
-app/api/routes/organizations.py	Organization routes (still debug headers)
-app/api/routes/roles.py	Role routes (still debug headers)
+app/api/routes/users.py	User routes (JWT as of Priority 6)
+app/api/routes/organizations.py	Organization routes (JWT as of Priority 6)
+app/api/routes/roles.py	Role routes (JWT as of Priority 6)
 app/api/routes/auth.py	Authentication routes (new in Priority 5)
 app/core/config.py	Configuration (DB, AUTH_DB, JWT settings)
 app/core/database.py	PostgreSQL connections (business + auth)
@@ -407,21 +451,28 @@ app/services/refresh.py	Refresh token storage, rotation, revocation
 database/migrations/001_iam_multitenant_v8.sql	IAM, multi-tenancy, security functions and RLS
 database/migrations/002_auth_session.sql	Auth session schema, refresh tokens, get_user_status
 scripts/state_check.py	State checks
-tests/test_isolation.py	Tenant-isolation tests (still debug headers)
+tests/test_isolation.py	Tenant-isolation tests (JWT + ASGITransport as of Priority 6)
 
-4.1 Git history — verified 11 November 2026
-git is available (2.56.0.windows.4). The repository root is C:/Users/nguey/Documents/SecureBiz-Lab, branch main, not a shallow clone, with one single commit:
+4.1 Git history — VERIFIED 12 November 2026 (supersedes v13 §4.1)
+git is available (2.56.0.windows.4). The repository root is C:/Users/ngu ey/Documents/SecureBiz-Lab, branch main, not a shallow clone.
+
+Verified commit list (git log --oneline, 12 November 2026):
 
 text
-2362024 (HEAD -> main, origin/main) feat: v0.3.0 - validated cryptographic architecture (Vault + pgsodium + RLS)
+a65f27b (HEAD -> main, origin/main) feat(priority6): migrate IAM routes and isolation test to JWT auth
+ff7d60a                              docs(v0.4.0): update documentation for Priority 5
+158aeb4                              feat(priority5): JWT auth + refresh tokens + auth routes + rebuild
+2362024                              feat: v0.3.0 - validated cryptographic architecture (Vault + pgsodium + RLS)
 
-The working tree was clean at the last v12 inspection.
+The v13 §4.1 statement "the repository contains exactly one commit (2362024)" is OBSOLETE. There are four commits as of 12 November 2026.
 
-git log --all --oneline -S searches for INSERT INTO public.users, INSERT INTO public.memberships, and INSERT INTO auth_private.credentials returned zero matching commits. Because the repository is not shallow and contains exactly one commit, this proves that no such statement was ever committed.
+The v13 §4.1 statement "the Priority 5 changes (9 files) have not been committed yet" is OBSOLETE. Priority 5 is committed in 158aeb4 and documented in ff7d60a.
+
+The v13 §28 statement "git commit / push of Priority 5 changes — PENDING" is OBSOLETE. Priority 5 and Priority 6 are both committed and pushed.
+
+git log --all --oneline -S searches for INSERT INTO public.users, INSERT INTO public.memberships, and INSERT INTO auth_private.credentials returned zero matching commits. This proves that no such statement was ever committed in any commit visible in the current history.
 
 Inference (not verified artifact): the existing active user, membership, and organization were provisioned by a manual, unversioned psql operation executed by securebiz_user during the 09-10 November 2026 session, using the test UUIDs now hardcoded in scripts/state_check.py (see Section 4.2). This remains unknown as a versioned artifact, but is defensible as manually provisioned with hardcoded test identities.
-
-New in v13: the Priority 5 changes (9 files) have not been committed yet. A git add -A, git commit, and git push is recommended after the rebuild is validated.
 
 4.2 Hardcoded test identities in scripts/state_check.py — verified 11 November 2026
 scripts/state_check.py (11343 bytes) contains the following hardcoded values:
@@ -465,10 +516,19 @@ The script does not call securebiz_register_public_key, securebiz_revoke_public_
 
 The script does duplicate a portion of the Vault signing logic already present in app/services/context_signing.py, intentionally, for cross-validation. This is a second source of truth to maintain.
 
+4.4 Git working tree — verified 12 November 2026
+After the Priority 6 commit (a65f27b), the working tree is clean:
+
+text
+git status --short
+(empty)
+
+No unstaged changes, no untracked files, no leftover .bak-v13 backups.
+
 5. ENVIRONMENT VARIABLES — VERIFIED NAMES AND BEHAVIOR
 The .env file was inspected safely. Only variable names and lengths were displayed.
 
-Current state (verified 11 November 2026 after recovery, unchanged in v13):
+Current state (verified 11 November 2026 after recovery, unchanged in v14):
 
 text
 POSTGRES_DB=securebiz
@@ -495,10 +555,10 @@ Resolution: the .env file was rebuilt from recovered values using [System.IO.Fil
 
 Never request or reproduce actual values.
 
-New in v13: the JWT HS256 secret is NOT in .env. It lives in Vault KV at secret/data/securebiz/jwt. This is by design (centralized secret management, audit, rotation).
+The JWT HS256 secret is NOT in .env. It lives in Vault KV at secret/data/securebiz/jwt. This is by design (centralized secret management, audit, rotation).
 
 6. LIVE POSTGRESQL ROLE CONFIGURATION
-Verified live on 11 November 2026. Unchanged in v13.
+Verified live on 11 November 2026. Unchanged in v14.
 
 Roles:
 
@@ -531,7 +591,7 @@ Never use securebiz_user as a runtime API account.
 A grant restriction against securebiz_user is not a meaningful security boundary against a superuser.
 
 7. LIVE SCHEMA PRIVILEGES
-Verified live on 11 November 2026. Unchanged in v13.
+Verified live on 11 November 2026. Unchanged in v14.
 
 auth_private
 securebiz_auth: USAGE.
@@ -567,7 +627,7 @@ pg_database_owner CREATE must not be interpreted as a grant to every database us
 These findings are schema-level privileges, not proof of table or function privileges.
 
 8. LIVE TABLE OWNERSHIP AND PRIVILEGES
-The live ACL query returned 111 rows (before migration 002). After migration 002, auth_session.refresh_tokens is added. Unchanged in v13.
+The live ACL query returned 111 rows (before migration 002). After migration 002, auth_session.refresh_tokens is added. Unchanged in v14.
 
 All tables included in that output were owned by:
 
@@ -610,7 +670,7 @@ No PUBLIC table privilege listed.
 RLS disabled.
 FORCE RLS disabled.
 
-New in v13: the table now contains exactly 1 row (the test credential created on 12 November 2026 for user a2c643f2-7212-4693-bc7f-d220cb9cdaf4, email test-user@test.com). The password hash is Argon2id with parameters time_cost=2, memory_cost=19456, parallelism=1, hash_len=32, salt_len=16. The hash itself must never be displayed.
+The table contains exactly 1 row (the test credential created on 12 November 2026 for user a2c643f2-7212-4693-bc7f-d220cb9cdaf4, email test-user@test.com). The password hash is Argon2id with parameters time_cost=2, memory_cost=19456, parallelism=1, hash_len=32, salt_len=16. The hash itself must never be displayed.
 
 8.2 Security tables
 Table	Owner	securebiz_owner privileges	RLS
@@ -733,8 +793,39 @@ every effective execution context.
 
 Do not claim that the entire database privilege model has been audited.
 
+8.8 auth_session.refresh_tokens content — verified 12 November 2026 (new in v14)
+The table contains 11 rows. All 11 rows have revoked_at NOT NULL. Active tokens: 0.
+
+Chronological breakdown (issued_at in UTC, 12 November 2026):
+
+#	issued_at	revoked_at	family status
+1	12:20:16.586	NULL (later revoked manually)	revoquée
+2	14:09:08.996	NULL (later revoked manually)	revoquée
+3	14:09:35.044	NULL (later revoked manually)	revoquée
+4	14:09:58.287	NULL (later revoked manually)	revoquée
+5	14:10:08.856	NULL (later revoked manually)	revoquée
+6	14:10:18.431	NULL (later revoked manually)	revoquée
+7	14:10:27.604	NULL (later revoked manually)	revoquée
+8	14:24:47.930	14:24:47.957	revoquée (empirical pre-F2 test)
+9	14:42:18.464	14:42:18.548	revoquée (F2 test 1)
+10	14:42:18.629	14:42:18.682	revoquée (F2 test 2)
+11	14:42:18.766	14:42:18.793	revoquée (F2 test 3)
+
+Origin of each group:
+
+Rows 8-11 were revoked automatically by their respective callers: row 8 by the empirical pre-F2 login+logout test (separate from the test suite), rows 9-11 by the three authenticated tests in tests/test_isolation.py via the asserted _logout() helper in each test's finally block.
+
+Rows 1-7 were pre-existing residues from earlier test runs (12:20 and 14:09-14:10). They were revoked manually on 12 November 2026 via seven calls to revoke_family(family_id) from the application service layer (securebiz_auth, family-level advisory lock, explicit COMMIT). No direct SQL UPDATE, no DELETE, no RLS change.
+
+Verified current state:
+sql
+SELECT count(*) AS total, count(*) FILTER (WHERE revoked_at IS NULL) AS active FROM auth_session.refresh_tokens;
+-- 11|0
+
+Do not modify the table without inspecting the schema (column names: id, user_id, family_id, token_hash, issued_at, expires_at, revoked_at, replaced_by, user_agent, ip_address) and the revocation model (§22.3). Never DELETE rows; revocation is by UPDATE revoked_at.
+
 9. LIVE RLS FLAGS
-Verified live on 11 November 2026. Unchanged in v13.
+Verified live on 11 November 2026. Unchanged in v14.
 
 Table	RLS enabled	FORCE RLS
 public.membership_roles	Yes	Yes
@@ -755,7 +846,7 @@ Do not disable RLS or FORCE RLS.
 Note: auth_session.refresh_tokens has RLS disabled. This is intentional: it is protected by strict ACLs (only securebiz_auth has SELECT/INSERT/UPDATE) and is not part of the tenant-scoped data model. It is a session store, not a tenant table.
 
 10. LIVE RLS POLICY INSPECTION — COMPLETED
-Status: COMPLETED on 11 November 2026. Unchanged in v13.
+Status: COMPLETED on 11 November 2026. Unchanged in v14.
 
 The live PostgreSQL policy query was executed:
 
@@ -907,7 +998,7 @@ The organizations SELECT policy does not explicitly invoke app_has_permission.
 The application routes must be checked to establish whether they invoke the required authorization checks.
 The policies' exact SQL expressions must be consulted from the actual command output before making any change.
 
-No RLS policy has been modified as part of these inspections.
+No RLS policy has been modified as part of these inspections, nor during Priority 5 or Priority 6.
 
 11. VAULT AND SIGNED TENANT CONTEXT
 Vault Transit key observed:
@@ -958,7 +1049,7 @@ read on transit/keys/securebiz-context (to verify key existence).
 
 The current init_vault_key() also performs POST /v1/sys/mounts/transit and POST /v1/transit/keys/{KEY_NAME}, which are admin operations that must be separated from runtime in production. This is a known security debt (Section 24.2).
 
-11.1 app/core/vault.py — updated in v13
+11.1 app/core/vault.py
 Full code is preserved in the transcript. Key points:
 
 VAULT_TOKEN is read from environment, RuntimeError immediately if missing (fail-fast at module load).
@@ -966,7 +1057,7 @@ init_vault_key() is idempotent: handles 400 already mounted, 404 key absent -> c
 sign_payload() validates the signature output: 64 bytes exactly, prefix vault:v, key_version >= 1.
 requests.exceptions.RequestException is caught and re-raised as RuntimeError.
 
-New in v13: get_jwt_secret() is implemented.
+get_jwt_secret() is implemented.
 Signature: def get_jwt_secret() -> tuple[bytes, str, bytes | None, str | None]
 Returns: (current_secret, current_kid, previous_secret, previous_kid)
 - current_secret: 32 bytes (decoded from 64 hex chars)
@@ -990,7 +1081,7 @@ Verified 12 November 2026:
 
 Known debt: init_vault_key() mixes Vault provisioning (mount engine, create key) with runtime. In production, the API should not be able to mount a secrets engine or create a key. This is documented in Section 24.2.
 
-11.2 app/services/context_signing.py — analyzed in v12, unchanged in v13
+11.2 app/services/context_signing.py
 Full code is preserved in the transcript. Key points:
 
 Separation is clean: no DB, no HTTP handler, no auth validation.
@@ -1002,7 +1093,7 @@ The docstring explicitly forbids authentication/JWT logic in this file.
 
 Confirmation: sign_context() does not verify that the user exists or that the membership is active. This is by design — PostgreSQL (securebiz_install_context) performs that verification at installation time. A malicious caller can generate a signed payload with arbitrary UUIDs; PostgreSQL rejects it at install if the user/org/membership is inactive. The signature proves API origin, not content legitimacy.
 
-11.3 app/main.py — updated in v13
+11.3 app/main.py
 Full code is preserved in the transcript. Key points:
 
 FastAPI application initialization, routers registered.
@@ -1010,7 +1101,7 @@ FastAPI application initialization, routers registered.
 /health uses get_database_session() and SELECT 1, returns 503 on OperationalError/OSError.
 Root endpoint minimal.
 
-New in v13: the auth router is registered.
+The auth router is registered.
 
 The imports section now includes:
 from app.api.routes.auth import router as auth_router
@@ -1041,7 +1132,7 @@ init_vault_key() mixes Vault provisioning with runtime. Should be separated in p
 startup_event() has no error handling around init_vault_key(). If Vault is unavailable, the API crashes (fail-closed, intentional but not graceful).
 
 12. DATABASE SECURITY FUNCTIONS — FIVE CRITICAL FUNCTIONS ALREADY INSPECTED
-Status: The five functions listed below have already been inspected individually. Unchanged in v13.
+Status: The five functions listed below have already been inspected individually. Unchanged in v14.
 
 The inspection included:
 
@@ -1107,7 +1198,7 @@ The function is explicitly anchored to the current tenant context.
 Its existence does not prove that every API route invokes it.
 
 12.3 auth_security.securebiz_install_context(...)
-Verified in the earlier inspection, unchanged in v13.
+Verified in the earlier inspection, unchanged in v14.
 
 The function:
 
@@ -1152,7 +1243,7 @@ Preserve its signature verification, membership verification, anti-replay and tr
 Do not invent or alter its exact argument list without consulting the live definition.
 
 12.4 auth_security.securebiz_get_context(...)
-Verified in the earlier inspection, unchanged in v13.
+Verified in the earlier inspection, unchanged in v14.
 
 The function:
 
@@ -1195,7 +1286,7 @@ This must be considered when assessing privileged write paths.
 The complete trigger function definition was inspected, but the previously pasted transcript was truncated near its end. Do not invent unverified code details.
 
 13. GLOBAL SECURITY DEFINER INVENTORY AND ADDITIONAL FUNCTION INSPECTIONS — COMPLETED
-Status: COMPLETED on 11 November 2026. Unchanged in v13.
+Status: COMPLETED on 11 November 2026. Unchanged in v14.
 
 The global inventory was executed. Its output returned 33 non-system SECURITY DEFINER routines (before migration 002).
 
@@ -1294,7 +1385,7 @@ Not executable by securebiz_app or securebiz_auth.
 
 The 10-minute margin covers clock skew and in-flight requests. A JTI that is still within its validity window is never deleted by this function.
 
-Its invocation mechanism remains open: no scheduled task, administrative process or provisioning caller has yet been established (see Section 26.3 in v12; unchanged in v13).
+Its invocation mechanism remains open: no scheduled task, administrative process or provisioning caller has yet been established.
 
 Do not grant the application role EXECUTE merely to make the function easier to call.
 
@@ -1330,7 +1421,7 @@ Validates kid non-empty and Ed25519 key = 32 bytes.
 No ON CONFLICT (fail-closed).
 Not executable by securebiz_app or securebiz_auth.
 
-The trusted administrative provisioning mechanism that calls this function has not yet been identified (see v12 Section 26.2, unchanged in v13). Do not expose this function to the business runtime role without a separate security design.
+The trusted administrative provisioning mechanism that calls this function has not yet been identified. Do not expose this function to the business runtime role without a separate security design.
 
 13.6 auth_security.securebiz_revoke_public_key(VARCHAR)
 Full definition (inspected in v11, unchanged):
@@ -1361,7 +1452,7 @@ Returns FOUND.
 No dynamic SQL.
 Not executable by securebiz_app or securebiz_auth.
 
-The trusted administrative revocation process has not yet been identified (see v12 Section 26.2, unchanged in v13).
+The trusted administrative revocation process has not yet been identified.
 
 13.7 Effective EXECUTE privileges on the eight pre-v12 application functions
 A dedicated effective privilege query was executed:
@@ -1430,7 +1521,7 @@ Whether all 25 pgsodium routines are expected and correctly configured for the i
 Whether any application routine invokes another privileged routine indirectly. (No static evidence found. Dynamic test pending.)
 Whether any application routine uses dynamic SQL. (No dynamic SQL found in any of the 9 application functions.)
 Whether all privileged routines constrain their inputs and data access appropriately. (Verified for the 4 newly inspected functions in v11 and the new get_user_status in v12.)
-Whether administrative key registration and revocation have a trusted operational caller. (See v12 Section 26.2, unchanged in v13.)
+Whether administrative key registration and revocation have a trusted operational caller. (Open.)
 Whether expired security-data cleanup is scheduled or manually administered. (Open.)
 Whether the effective execution context of each routine interacts safely with FORCE RLS and the owner policies. (Static analysis done. Dynamic test pending.)
 
@@ -1477,7 +1568,7 @@ owner_can_exec = t (verified).
 Note: the function returns NULL if the user does not exist. The Python caller must treat NULL as "user not found or unauthorized".
 
 14. TRIGGER INSPECTION — COMPLETED
-Unchanged in v13.
+Unchanged in v14.
 
 The live trigger inspection targeted:
 
@@ -1538,7 +1629,7 @@ This may behave differently when an operation is executed through a SECURITY DEF
 Do not modify the trigger until all write paths and effective execution contexts are understood.
 
 15. SEARCH FOR ROUTINES EXPLICITLY WRITING TO public.roles — COMPLETED
-Unchanged in v13.
+Unchanged in v14.
 
 A search was performed for routine definitions containing explicit statements matching:
 
@@ -1575,7 +1666,7 @@ Do not interpret the zero-row result as proof that no role-writing path exists.
 The additional global SECURITY DEFINER inventory does not change this limitation: the static search and the global inventory answer different questions.
 
 16. GLOBAL SECURITY DEFINER INVENTORY — COMPLETED
-Status: COMPLETED on 11 November 2026. Unchanged in v13.
+Status: COMPLETED on 11 November 2026. Unchanged in v14.
 
 The complete global inventory has now been executed and its output supplied.
 
@@ -1603,12 +1694,12 @@ The 25 extension routines belong to pgsodium, with owners observed as pgsodium_k
 Do not execute the global inventory query again as the next operation.
 
 17. app/main.py — COMPLETE INSPECTION
-The complete file was supplied and inspected on 11 November 2026, and updated in Priority 5 (12 November 2026).
+The complete file was supplied and inspected on 11 November 2026, and updated in Priority 5 (12 November 2026). Unchanged in v14.
 
-Observed (v12 base):
+Observed:
 
 FastAPI application initialization;
-registration of users, organizations and roles routers;
+registration of users, organizations, roles and auth routers;
 startup handler using @app.on_event("startup");
 call to init_vault_key() during startup;
 root endpoint;
@@ -1618,19 +1709,13 @@ The health endpoint catches database connection errors and returns HTTP 503.
 
 No user, organization or membership provisioning was visible in this file.
 
-New in v13 (Priority 5):
+Router registration:
 
-Import added:
 from app.api.routes.auth import router as auth_router
-
-Registration added:
+app.include_router(organizations_router)
+app.include_router(users_router)
+app.include_router(roles_router)
 app.include_router(auth_router)
-
-The full router order is now:
-- organizations_router
-- users_router
-- roles_router
-- auth_router
 
 Verified 12 November 2026 via /openapi.json:
 Total paths: 8
@@ -1651,19 +1736,19 @@ startup_event() has no error handling around init_vault_key(). If Vault is unava
 
 Do not modify main.py during the current inspection phase unless authorized.
 
-18. API ROUTES — INSPECTED AND EXTENDED IN v13
-18.1 Users
+18. API ROUTES — INSPECTED AND EXTENDED IN v14
+18.1 Users — MIGRATED to JWT in Priority 6
 File:
 
 text
 app/api/routes/users.py
 
-Observed (unchanged since v12):
+Observed (as of 12 November 2026, after Priority 6):
 
 text
 GET /users
 
-Query:
+Query (unchanged):
 
 sql
 SELECT id, email, status
@@ -1673,26 +1758,26 @@ ORDER BY email;
 The route uses:
 
 python
-Depends(get_tenant_context)
+Depends(get_authenticated_tenant_context)
 
-Its docstring refers to RLS and users:read, but effective route-level permission enforcement must be established from the actual code and database policies.
+Its docstring refers to RLS and users:read. Effective route-level permission enforcement is provided by the RLS policies on public.users (Section 10.3) combined with the signed context installation.
 
 No user-creation endpoint was observed.
 
-IMPORTANT: this route still uses the debug-header dependency (X-Debug-User-Id, X-Debug-Org-Id). It has NOT been migrated to get_authenticated_tenant_context (JWT + X-Organization-Id). Migration is Priority 6.
+The previous debug-header dependency (X-Debug-User-Id, X-Debug-Org-Id) is no longer used on this route. A caller must now send Authorization: Bearer <jwt> and X-Organization-Id: <uuid>.
 
-18.2 Organizations
+18.2 Organizations — MIGRATED to JWT in Priority 6
 File:
 
 text
 app/api/routes/organizations.py
 
-Observed (unchanged since v12):
+Observed (as of 12 November 2026, after Priority 6):
 
 text
 GET /organizations/me
 
-Query:
+Query (unchanged):
 
 sql
 SELECT id, name, slug
@@ -1703,31 +1788,31 @@ Returns 404 when no organization is found.
 
 No organization-creation endpoint was observed.
 
-IMPORTANT: this route still uses the debug-header dependency. Migration is Priority 6.
+The route uses Depends(get_authenticated_tenant_context). The debug-header dependency is no longer used.
 
-18.3 Roles
+18.3 Roles — MIGRATED to JWT in Priority 6
 File:
 
 text
 app/api/routes/roles.py
 
-Observed (unchanged since v12):
+Observed (as of 12 November 2026, after Priority 6):
 
 text
 GET /roles
 
-Query:
+Query (unchanged):
 
 sql
 SELECT id, name
 FROM public.roles
 ORDER BY name;
 
-The docstring refers to RLS and roles:read, but actual enforcement still needs to be established.
+The docstring refers to RLS and roles:read. Actual enforcement is provided by the RLS policies on public.roles (Section 10.3) combined with the signed context installation.
 
 No role-creation endpoint was observed.
 
-IMPORTANT: this route still uses the debug-header dependency. Migration is Priority 6.
+The route uses Depends(get_authenticated_tenant_context). The debug-header dependency is no longer used.
 
 18.4 Dependency contract in routes — verified 11 November 2026
 A read-only search across app/api/routes/*.py was performed:
@@ -1737,7 +1822,7 @@ $patterns = '\.commit\(|\.rollback\(|\.close\(|with\s+connection|with\s+conn\b'
 Get-ChildItem .\app\api\routes -Recurse -File -Filter *.py |
     Select-String -Pattern $patterns
 
-Only three matches were returned, all of the form with connection.cursor() as cur: (in organizations.py:27, roles.py:25, users.py:25). These are the psycopg cursor context manager, not a connection context manager. They do not commit, rollback, or close the connection.
+Only three matches were returned, all of the form with connection.cursor() as cur: (in organizations.py, roles.py, users.py). These are the psycopg cursor context manager, not a connection context manager. They do not commit, rollback, or close the connection.
 
 No occurrence of connection.commit(), connection.rollback(), connection.close(), or with connection: as a bare connection context manager was found.
 
@@ -1750,11 +1835,11 @@ Get-ChildItem .\app\api\routes -Recurse -File -Filter *.py |
 
 Result: no matches. No route opens its own connection.
 
-Conclusion: the dependency contract — routes do not manage transactions and do not open connections — is respected empirically by all three read-only routes.
+Conclusion: the dependency contract — routes do not manage transactions and do not open connections — is respected empirically by all three read-only routes. This remains true after the Priority 6 migration.
 
 Reserve: any future write route must be submitted to the same verification.
 
-18.5 NEW in v13 — Authentication routes
+18.5 Authentication routes
 File:
 
 text
@@ -1839,7 +1924,7 @@ Exception mapping (auth routes):
 - Generic 401 on any credentials failure.
 - Logging: no token, no hash, no secret. Only "login: authenticate() failed", "refresh: rotate_refresh_token failed", etc.
 
-18.6 NEW in v13 — API surface verification
+18.6 API surface verification
 Verified 12 November 2026 via:
 
 powershell
@@ -1855,10 +1940,22 @@ Result: Total paths: 8
 - /auth/refresh
 - /auth/logout
 
-19. AUTH DEPENDENCIES — NEW IN v13
-19.1 Existing get_tenant_context — unchanged
+18.7 New in v14 — Routes use of get_authenticated_tenant_context (verified 12 November 2026)
+A read-only grep across app/api/routes/*.py produced:
 
-File: app/api/dependencies.py (lines 58-150, unchanged since v12).
+text
+app/api/routes/organizations.py:9:from app.api.dependencies import get_authenticated_tenant_context
+app/api/routes/organizations.py:19:    connection: Connection = Depends(get_authenticated_tenant_context),
+app/api/routes/roles.py:8:from app.api.dependencies import get_authenticated_tenant_context
+app/api/routes/roles.py:18:    connection: Connection = Depends(get_authenticated_tenant_context),
+app/api/routes/users.py:8:from app.api.dependencies import get_authenticated_tenant_context
+app/api/routes/users.py:18:    connection: Connection = Depends(get_authenticated_tenant_context),
+
+No occurrence of get_tenant_context in any route file. The debug-header dependency remains defined in app/api/dependencies.py but is not imported by any current route.
+
+19. AUTH DEPENDENCIES
+19.1 Existing get_tenant_context — retained, no longer used by routes
+File: app/api/dependencies.py.
 
 Uses debug headers X-Debug-User-Id and X-Debug-Org-Id.
 APP_ENV guard (rejects production).
@@ -1866,9 +1963,9 @@ DEBUG_HEADERS_ENABLED guard (rejects when false).
 sign_context + securebiz_install_context + yield + cleanup + commit/rollback + close.
 Exception mapping: HTTPException -> rollback + propagate; Exception -> rollback + 500.
 
-This function is STILL USED by /users, /organizations/me, /roles (Priority 6 migration pending).
+This function is no longer used by /users, /organizations/me, /roles as of Priority 6 (commit a65f27b). It remains defined in dependencies.py for backward compatibility, in accordance with Priority 6 step 8.
 
-19.2 NEW in v13 — UserContext dataclass
+19.2 UserContext dataclass
 
 python
 @dataclass(frozen=True)
@@ -1878,7 +1975,7 @@ class UserContext:
 
 Purpose: carry the authenticated user identity from get_current_user to get_authenticated_tenant_context. Frozen to prevent accidental mutation.
 
-19.3 NEW in v13 — get_current_user()
+19.3 get_current_user()
 
 python
 def get_current_user(
@@ -1901,7 +1998,7 @@ Exception mapping:
 
 Logging: no token, no secret, no user_id, no jti. Only the class of failure.
 
-19.4 NEW in v13 — get_authenticated_tenant_context()
+19.4 get_authenticated_tenant_context() — now used by the three IAM routes
 
 python
 def get_authenticated_tenant_context(
@@ -1959,7 +2056,7 @@ Rationale for the mapping:
 
 Logging: no exception raw content. Only messages like "Authenticated tenant context: access refused" without exc, without payload, without signature.
 
-Status: implemented and compiled. NOT YET USED by any route (Priority 6 migration pending).
+Status: implemented, compiled, and used by /users, /organizations/me, /roles as of Priority 6. Tested by tests/test_isolation.py (4/4 passed).
 
 19.5 Transaction lifecycle of get_authenticated_tenant_context
 Success path:
@@ -1978,7 +2075,7 @@ The single-transaction invariant is respected:
 - Never cleanup after rollback.
 
 20. app/core/database.py
-Unchanged from v12.
+Unchanged from v12 and v13.
 
 python
 """
@@ -2008,43 +2105,50 @@ def get_database_session() -> Generator[Connection, None, None]:  # business rol
 
 Verified by TCP test: get_auth_connection() successfully connects as securebiz_auth from the API container.
 
-21. AUTHENTICATION AND PROVISIONING — STATUS AFTER PRIORITY 5
-21.1 What is implemented and verified (Priority 5 CLOSE)
+21. AUTHENTICATION AND PROVISIONING — STATUS AFTER PRIORITY 5 AND PRIORITY 6
+21.1 What is implemented and verified
 
 Element	Status
 app/core/vault.py get_jwt_secret()	Verified (32 bytes, kid=v2, no rotation)
 Vault KV secret secret/data/securebiz/jwt	Present (version 3, never displayed)
 app/core/jwt.py create_access_token	Verified (HS256, kid, claims)
-app/core/jwt.py verify_access_token	Verified (18/18 tests, alg/iss/aud/exp/iat/sub/jti/token_type)
-app/services/refresh.py	Rewritten (advisory locks, RefreshTokenError, RefreshTokenDatabaseError, revoke_family_by_raw_token)
+app/core/jwt.py verify_access_token	Verified (18/18 tests)
+app/services/refresh.py	Rewritten (advisory locks, RefreshTokenError, RefreshTokenDatabaseError, revoke_family, revoke_family_by_raw_token)
 app/schemas/auth.py	Created (LoginRequest with EmailStr, TokenResponse)
 app/api/routes/auth.py	Created (/auth/login, /auth/refresh, /auth/logout)
 app/api/dependencies.py	Extended (UserContext, get_current_user, get_authenticated_tenant_context)
+app/api/routes/users.py	Migrated to get_authenticated_tenant_context (Priority 6)
+app/api/routes/organizations.py	Migrated to get_authenticated_tenant_context (Priority 6)
+app/api/routes/roles.py	Migrated to get_authenticated_tenant_context (Priority 6)
+tests/test_isolation.py	Rewritten with httpx.AsyncClient + ASGITransport, 4 tests, asserted logout cleanup (Priority 6)
 app/main.py	auth_router registered (8 paths verified)
 requirements.txt	PyJWT==2.10.1, argon2-cffi==25.1.0, email-validator==2.2.0 added
-Packages in running container	PyJWT 2.10.1, argon2-cffi 25.1.0, email-validator 2.2.0, httpx 0.28.1, httpx2 2.16.0
-Packages persisted in image	NO (rebuild pending — critical debt)
+Packages in running container	PyJWT 2.10.1, argon2-cffi 25.1.0, email-validator 2.2.0, httpx 0.28.1
+Packages persisted in image	YES (rebuilt 12 November 2026, verified with docker run --rm)
 auth_private.credentials	1 row (test credential, Argon2id)
-auth_session.refresh_tokens	0 rows (clean)
+auth_session.refresh_tokens	11 rows, 0 active (all revoked)
 auth_session active_tokens	0
 public.users	1 row (status = active)
 Priority 5 tests	P1-P8 (8/8) + P11 (1/1) all passed
+Priority 6 tests	F2 4/4 passed
+Git commit of Priority 5	Done (158aeb4)
+Git commit of Priority 6	Done (a65f27b)
+Git push of Priority 5 and Priority 6	Done (origin/main on a65f27b)
 
-21.2 What is NOT implemented (Priority 6 and beyond)
+21.2 What is NOT implemented
 
 Element	Status
-Migration of /users, /organizations/me, /roles to get_authenticated_tenant_context	Pending — Priority 6
-Removal of X-Debug-* headers from get_tenant_context	Pending — Priority 6
-tests/test_isolation.py migration to JWT	Pending — Priority 6 or 9
-Provisioning endpoint / script for Argon2id hashes	Pending — dette v13
+Provisioning endpoint / script for Argon2id hashes	Pending — Priority 8
 state_check.py extension for auth_session.refresh_tokens and get_user_status	Pending — Priority 9
-Rebuild of securebiz-lab-api:latest image	Pending — critical debt (Priority 7)
-Runtime tenant-isolation tests under JWT	Pending — Priority 9
+Runtime tenant-isolation tests under JWT for /users and /roles	Pending — Priority 9 (only /organizations/me is covered by F2)
+Full transaction lifecycle tests (cleanup failure, commit failure, rollback failure, connection close on each path)	Pending — Priority 9
+Removal of get_tenant_context (dead code)	Open — retained for backward compatibility per Priority 6 step 8
+.gitattributes CRLF policy	Pending — hygiene, Priority 10
 
 21.3 Provisioning searches already performed
 Repository-wide searches for INSERT INTO users, INSERT INTO memberships, create_user, create_membership, provision_user, seed_user, seed_data, create_organization returned nothing. Migration inspection confirmed no user/organization/membership provisioning routine. Git history confirmed no committed INSERT statement.
 
-New in v13: only the auth_private.credentials table has been manually populated (1 row), via psql as securebiz_user, for the test user a2c643f2-7212-4693-bc7f-d220cb9cdaf4. This is a test credential, not a provisioning mechanism.
+Only the auth_private.credentials table has been manually populated (1 row), via psql as securebiz_user, for the test user a2c643f2-7212-4693-bc7f-d220cb9cdaf4. This is a test credential, not a provisioning mechanism.
 
 21.4 Authentication database role
 securebiz_auth has:
@@ -2060,9 +2164,9 @@ no parent-role membership.
 
 Prior connection attempt without a password failed with fe_sendauth: no password supplied. This does not prove the role is invalid.
 
-TCP connection from the API container to securebiz_auth was successful (verified ('securebiz_auth',)).
+TCP connection from the API container to securebiz_auth was successful.
 
-22. PASSWORD HASHING AND JWT — DECISIONS IMPLEMENTED IN v13
+22. PASSWORD HASHING AND JWT — IMPLEMENTED DECISIONS
 22.1 Password hashing — IMPLEMENTED
 
 Library: argon2-cffi==25.1.0
@@ -2134,7 +2238,19 @@ Reuse detection	Yes. If revoked_at is not null on the provided token -> revoke e
 family_id	UUID shared across rotations of the same login session
 Bulk revocation	On reuse detection. Also available via revoke_family(family_id) and revoke_family_by_raw_token(raw)
 
-Concurrency (verified v13):
+Schema of auth_session.refresh_tokens (verified 12 November 2026 via information_schema.columns):
+- id uuid NOT NULL, DEFAULT gen_random_uuid()
+- user_id uuid NOT NULL
+- family_id uuid NOT NULL
+- token_hash bytea NOT NULL
+- issued_at timestamptz NOT NULL, DEFAULT clock_timestamp()
+- expires_at timestamptz NOT NULL
+- revoked_at timestamptz NULL
+- replaced_by uuid NULL
+- user_agent text NULL
+- ip_address inet NULL
+
+Concurrency:
 python
 _acquire_family_lock(cur, family_id):
     cur.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (str(family_id),))
@@ -2152,20 +2268,23 @@ rotate_refresh_token flow:
 5. If is_expired -> RefreshTokenError("expired").
 6. Generate new_raw, insert new row (RETURNING id), update old row (revoked_at, replaced_by = new.id). COMMIT. Return (new_raw, user_id).
 
-revoke_family(family_id) flow:
-1. _acquire_family_lock(cur, family_id).
-2. UPDATE auth_session.refresh_tokens SET revoked_at = clock_timestamp() WHERE family_id = %s AND revoked_at IS NULL.
-3. COMMIT.
-Idempotent. No exception on missing family.
+revoke_family(family_id) flow (verified 12 November 2026, full body):
+1. get_auth_connection().
+2. with conn.cursor() as cur: _acquire_family_lock(cur, family_id).
+3. UPDATE auth_session.refresh_tokens SET revoked_at = clock_timestamp() WHERE family_id = %s AND revoked_at IS NULL.
+4. conn.commit().
+5. On psycopg.Error: rollback, raise RefreshTokenDatabaseError("failed to revoke family") from None.
+6. finally: _close_quietly(conn).
+Idempotent. No exception on missing family (the UPDATE affects zero rows and the COMMIT succeeds). No prior SELECT.
 
-revoke_family_by_raw_token(raw_token) flow:
+revoke_family_by_raw_token(raw_token) flow (verified 12 November 2026, full body):
 1. If raw_token is not str or empty -> return (silent no-op).
 2. token_hash = SHA-256(raw_token).
 3. SELECT family_id FROM auth_session.refresh_tokens WHERE token_hash = %s (no lock).
    If None -> conn.rollback(); return (silent no-op).
 4. _acquire_family_lock(cur, family_id).
 5. UPDATE ... SET revoked_at = clock_timestamp() WHERE family_id = %s AND revoked_at IS NULL.
-6. COMMIT.
+6. conn.commit().
 Idempotent. Unknown token -> silent no-op. Used by /auth/logout.
 
 Exception separation:
@@ -2174,7 +2293,7 @@ Exception separation:
 
 Both inherit from different bases on purpose. This separation was introduced in Priority 5 (Bloc B1bis).
 
-23. TESTING AND VALIDATION — PRIORITY 5 CLOSE
+23. TESTING AND VALIDATION — PRIORITY 5 AND PRIORITY 6
 23.1 Priority 5 functional tests — executed 12 November 2026
 
 Bloc E2 v7 (P1-P8) — run ac649048:
@@ -2199,7 +2318,33 @@ P11 F3 revoked	0 active rows in F3
 P11 user reactivated (finally)	verified SELECT status='active'
 Final state	credentials=1 refresh_tokens=0 active_tokens=0 user=active
 
-23.2 Historical results (from v12)
+23.2 Priority 6 functional tests — executed 12 November 2026
+tests/test_isolation.py (4/4 passed):
+
+Test	Assertion	Result
+test_access_own_organization	200 + json["id"] == ORG_A	PASSED
+test_cross_tenant_access_rejected	403 + "detail" in json	PASSED
+test_no_jwt_rejected	401 + detail == "Authentication required."	PASSED
+test_no_organization_header_rejected	400 + detail == "Header X-Organization-Id is required."	PASSED
+
+The pytest run also emitted two DeprecationWarning messages about @app.on_event("startup") in app/main.py. These warnings are expected and documented as known technical debt (Section 24.2). They are not failures.
+
+Cleanup: each of the three authenticated tests calls /auth/logout in a finally block with an explicit Cookie header, and asserts status_code == 200 and status == "logged out". The cleanup is verified by the final database state (Section 23.3).
+
+23.3 Database state after Priority 6 (verified 12 November 2026)
+sql
+SELECT count(*) AS total, count(*) FILTER (WHERE revoked_at IS NULL) AS active FROM auth_session.refresh_tokens;
+-- 11|0
+
+Breakdown of the 11 rows (chronological):
+- 12:20:16 — 1 row, pre-existing residue, revoked manually via revoke_family.
+- 14:09:08 to 14:10:27 — 6 rows, pre-existing residues, revoked manually via revoke_family.
+- 14:24:47 — 1 row, empirical pre-F2 login+logout, revoked automatically.
+- 14:42:18 — 3 rows, F2 authenticated tests, revoked automatically via asserted _logout().
+
+No active refresh tokens remain. No DELETE was performed. No RLS was modified. No direct UPDATE was executed outside the application service layer.
+
+23.4 Historical results (from v12)
 Check	Historical result
 pytest	3/3 passed
 Bandit 1.9.4	0 findings
@@ -2208,29 +2353,27 @@ scripts/state_check.py	4 OK, 6 skipped
 
 scripts/state_check.py performs an end-to-end install_context + get_context test with rollback, but does not call get_user_status or the three administrative functions.
 
-23.3 Test files
+23.5 Test files
 Bloc C — jwt.py unit tests: 18/18 passed (P1-P3 + N1-N15). Covered: valid token, wrong algorithm (none, RS256), wrong kid, wrong iss/aud, expired, wrong token_type, non-canonical sub/jti, missing required claim, tampered signature, create with non-canonical UUID.
 
 Bloc E2 v7 — refresh endpoints: 8/8 passed. See §23.1.
-
 Bloc E2 bis v4 — disabled user: 1/1 passed. See §23.1.
+Priority 6 tests/test_isolation.py: 4/4 passed. See §23.2.
 
-23.4 Not yet tested
-- JWT via Authorization: Bearer (only the cookie header was used for replay tests)
-- get_authenticated_tenant_context (implemented but not called by any route)
-- Tenant isolation under JWT (tests/test_isolation.py still uses debug headers)
-- Full transaction lifecycle edge cases (cleanup failure, commit failure, etc.)
+23.6 Not yet tested
+- JWT via Authorization: Bearer on /users and /roles (F2 covers /organizations/me only)
+- Full transaction lifecycle edge cases (cleanup failure, commit failure, rollback failure, connection close on each path)
 - state_check.py extended coverage (auth_session.refresh_tokens, get_user_status, credentials)
+- .gitattributes CRLF/LF policy
 
 24. CONSOLIDATED SECURITY ASSESSMENT
-24.1 Positive findings — v12 base + v13 additions
+24.1 Positive findings
 
-v12 findings (unchanged):
+v12 base (unchanged):
 - securebiz_app is non-superuser and has no BYPASSRLS.
 - securebiz_auth is non-superuser and has no BYPASSRLS.
 - securebiz_owner is NOLOGIN, non-superuser and has no BYPASSRLS.
 - No role memberships involving the four inspected roles were returned.
-- The dedicated membership query for securebiz_auth returned zero rows.
 - securebiz_app cannot use auth_private.
 - securebiz_auth cannot use auth_security.
 - securebiz_auth has no direct credentials-table privilege.
@@ -2238,7 +2381,7 @@ v12 findings (unchanged):
 - securebiz_owner has SELECT on credentials.
 - Six tenant-sensitive public IAM tables have RLS and FORCE RLS enabled.
 - The API uses securebiz_app as its business database role.
-- pgsodium 3.1.9 is installed in the custom PostgreSQL image.
+- pgsodium 3.1.9 is installed.
 - The dependency defaults DEBUG_HEADERS to false.
 - The dependency rejects requests when APP_ENV=production.
 - The dependency installs and cleans up signed context within a single connection lifecycle.
@@ -2251,7 +2394,7 @@ v12 findings (unchanged):
 - The trigger protecting system roles has been identified and inspected.
 - The explicit static routine search for writes to public.roles returned zero rows.
 - The global SECURITY DEFINER inventory is completed (33 pre-002, 34 post-002).
-- Twenty-five SECURITY DEFINER routines belong to pgsodium (out of scope, not modified).
+- Twenty-five SECURITY DEFINER routines belong to pgsodium (out of scope).
 - All nine application SECURITY DEFINER routines are owned by securebiz_owner with search_path=pg_catalog, pg_temp.
 - Effective EXECUTE privileges were verified for all eight pre-v12 application SECURITY DEFINER routines.
 - securebiz_app can execute the context installation, context retrieval, context cleanup and permission-checking functions.
@@ -2271,7 +2414,7 @@ v12 findings (unchanged):
 v12 additions (unchanged):
 - Migration 002 applied successfully with ON_ERROR_STOP=1.
 - auth_session schema created, owned by securebiz_user.
-- auth_session.refresh_tokens created, owned by securebiz_user, with 3 constraints and 3 indexes.
+- auth_session.refresh_tokens created, owned by securebiz_user.
 - auth_session.get_user_status(UUID) created, owned by securebiz_owner, SECURITY DEFINER, search_path=pg_catalog, pg_temp.
 - securebiz_auth has SELECT, INSERT, UPDATE on auth_session.refresh_tokens.
 - securebiz_auth has EXECUTE on auth_session.get_user_status.
@@ -2285,27 +2428,43 @@ v12 additions (unchanged):
 - API starts successfully with Application startup complete.
 - Vault Ed25519 key securebiz-context already exists (no recreation).
 
-v13 additions (new):
+v13 additions (unchanged):
 - JWT HS256 issuance verified (18/18 tests): only HS256 accepted, alg header verified, kid verified against current and previous.
 - JWT verification rejects: alg=none, alg=RS256, wrong kid, wrong iss, wrong aud, expired, wrong token_type, non-canonical sub/jti, missing required claim, tampered signature, create with non-canonical UUID.
 - Refresh token rotation verified (P4): same family_id, new cookie, new JWT.
-- Reuse detection verified (P5): old cookie -> 401 + entire family F1 revoked (including the replacement token).
+- Reuse detection verified (P5): old cookie -> 401 + entire family F1 revoked.
 - Logout verified (P7): family F2 revoked, cookie cleared.
 - Logout idempotent (P8): 200 without cookie.
 - Disabled user (P11): refresh -> 401 + F3 revoked.
 - No orphan tokens after 9 tests: active_tokens = 0 in whole DB.
 - Argon2id dummy hash prevents timing-based user enumeration.
-- Generic 401 on all credentials failures (no distinction between unknown email and wrong password).
-- get_current_user exception mapping: 401 (invalid), 503 (Vault), 500 (programming error). No bug masked as 503.
-- get_authenticated_tenant_context exception mapping: 401 (auth), 403 (membership refusal), 500 (SQL anomaly), 503 (OperationalError). No refusal masked as unavailability.
-- Advisory lock on family_id: uniform order (family -> row) across rotate/revoke/revoke_by_raw. Prevents deadlock.
-- RefreshTokenError (ValueError) and RefreshTokenDatabaseError (RuntimeError) are strictly separated. except RefreshTokenError cannot swallow a DB failure.
-- RefreshTokenError mapped to 401, RefreshTokenDatabaseError mapped to 503.
-- All 22 RLS policies remain untouched during Priority 5.
+- Generic 401 on all credentials failures.
+- get_current_user exception mapping: 401 / 503 (Vault) / 500 (programming error).
+- get_authenticated_tenant_context exception mapping: 401 / 403 / 500 / 503.
+- Advisory lock on family_id: uniform order (family -> row) across rotate/revoke/revoke_by_raw.
+- RefreshTokenError and RefreshTokenDatabaseError strictly separated.
+- All 22 RLS policies remain untouched.
 - All 8 SQL functions unchanged during Priority 5.
 - All migrations unchanged during Priority 5.
 
-24.2 Findings requiring further review — v12 base + v13 additions
+v14 additions (new):
+- Image rebuilt with all Priority 5 packages (Section 3.5). The critical debt from v13 §3.5 is resolved.
+- Container securebiz-api runs from the rebuilt image (identical image IDs).
+- Priority 5 committed (158aeb4) and pushed (origin/main up to date).
+- Priority 5 documentation committed (ff7d60a).
+- Priority 6 committed (a65f27b) and pushed (origin/main up to date).
+- git history now shows 4 commits, not 1 (Section 4.1 corrected).
+- Three IAM routes migrated to get_authenticated_tenant_context (verified by grep, Section 18.7).
+- tests/test_isolation.py rewritten with httpx.AsyncClient + ASGITransport (Section 23.2, commit a65f27b).
+- Each authenticated test asserts the logout cleanup (status_code == 200 and status == "logged out").
+- The test cross_tenant_access_rejected requires a strict 403 (no longer accepts 403, 404, 500).
+- Refresh-token store cleaned: 11 rows total, 0 active (Section 8.8, Section 23.3).
+- Seven pre-existing families revoked manually via revoke_family (service layer, securebiz_auth, family-level advisory lock, COMMIT).
+- No DELETE and no direct UPDATE performed against auth_session.refresh_tokens.
+- Four .bak-v13 backups removed from the working tree (3 routes + 1 test).
+- Working tree clean (Section 4.4).
+
+24.2 Findings requiring further review
 
 v12 findings (unchanged):
 - Every table is owned by superuser securebiz_user.
@@ -2321,8 +2480,8 @@ v12 findings (unchanged):
 - The debug-header dependency accepts client-supplied debug identity headers when debug mode is enabled outside exact production.
 - The debug-header dependency does not validate JWTs.
 - A debug header's UUID syntax check is not authentication.
-- The current user and membership provisioning origin remains unknown as a versioned artifact (manually provisioned with hardcoded test identities is the inferred origin).
-- Password hashing is not established as a provisioning workflow (only a manual test credential).
+- The current user and membership provisioning origin remains unknown as a versioned artifact.
+- Password hashing is not established as a provisioning workflow.
 - Vault is configured in development mode with a development root token.
 - Startup calls Vault key initialization.
 - The transaction lifecycle has not been exhaustively tested.
@@ -2344,20 +2503,23 @@ v12 findings (unchanged):
 - auth_session.refresh_tokens has RLS disabled (intentional).
 - securebiz_auth has SELECT, INSERT, UPDATE on refresh_tokens but no DELETE.
 
-v13 additions (new):
-- Rebuild of securebiz-lab-api:latest is PENDING. Priority 5 packages are in the running container but not in the image. Any container restart loses them. CRITICAL.
-- httpx.ASGITransport does not inject cookies set via cookies.set(). Tests must use explicit Cookie header for replay scenarios.
-- TestClient of Starlette 1.10.0 requires httpx2 (separate package from httpx). Both httpx and httpx2 have the cookie limitation.
-- $LASTEXITCODE is unreliable for psql and docker cp when stderr is written. Verify DB state or file existence instead.
-- $ErrorActionPreference = "Stop" stops PowerShell scripts on native stderr. Use local Continue + try/finally.
-- users_status_check allows only 'active', 'disabled', 'pending'. 'inactive' is rejected.
-- get_authenticated_tenant_context is implemented and compiled but NOT YET USED by any route.
-- get_tenant_context (debug headers) is STILL USED by /users, /organizations/me, /roles.
-- tests/test_isolation.py still uses debug headers.
-- auth_private.credentials contains 1 test row, created manually, not by a provisioning workflow.
-- state_check.py does not yet cover auth_session.refresh_tokens, get_user_status, or credentials.
-- Priority 5 changes (9 files) have not been committed to git yet.
-- The API image builds can fail on PyPI timeout (observed twice on 12 November 2026). Mitigation: increase pip timeout/retries in Dockerfile, or use a PyPI mirror, or verify Docker MTU.
+v13 additions (unchanged):
+- httpx.ASGITransport does not inject cookies set via cookies.set(). Use explicit Cookie header for replay scenarios.
+- TestClient of Starlette 1.10.0 requires httpx2 (separate package from httpx). Tests use httpx.AsyncClient directly to avoid this dependency.
+- $LASTEXITCODE is unreliable for psql and docker cp when stderr is written.
+- $ErrorActionPreference = "Stop" stops PowerShell scripts on native stderr.
+- users_status_check allows only 'active', 'disabled', 'pending'.
+- The API image builds can fail on PyPI timeout. Mitigation: increase pip timeout/retries in Dockerfile, or use a PyPI mirror, or verify Docker MTU.
+
+v14 additions (new):
+- The static guard Contains("TestClient") matches docstrings. Reformulate docstrings or restrict the guard to executable lines.
+- _logout() in a finally block must assert its response (status_code == 200 and status == "logged out"). Otherwise a 503 from /auth/logout is silently swallowed and an active session leaks.
+- Any test that calls /auth/login creates a refresh-token family and must revoke it via /auth/logout in a finally block with an explicit Cookie header.
+- revoke_family(family_id) is a silent no-op on an unknown family. Safe to call in a loop.
+- WriteAllText without BOM removes an existing UTF-8 BOM. Cosmetic for Python 3, but visible in diffs.
+- git core.autocrlf emits LF/CRLF warnings on Windows. Not a failure. A .gitattributes policy is out of scope for Priority 6.
+- get_tenant_context remains defined in app/api/dependencies.py but is no longer imported by any route. It is dead code retained for backward compatibility per Priority 6 step 8. Its removal is open.
+- Public.permissions is not read by app_has_permission (already noted in v13 §8.4 and §12.2). Confirmed by the absence of an owner SELECT privilege on this table.
 
 25. CURRENT INVESTIGATION STATUS
 Investigation	Actual status
@@ -2400,7 +2562,7 @@ AUTH_DB_* configuration	Completed
 TCP connection as securebiz_auth	Completed — verified
 API startup with new config	Completed
 
-v13 additions (new):
+v13 additions (unchanged):
 app/core/vault.py get_jwt_secret()	Completed — verified (32 bytes, kid=v2, no rotation)
 Vault KV secret secret/data/securebiz/jwt	Completed — present (version 3, never displayed)
 app/core/jwt.py create_access_token + verify_access_token	Completed — 18/18 tests passed
@@ -2413,92 +2575,34 @@ app/main.py auth_router registration	Completed — 8 paths verified
 Priority 5 functional tests P1-P8	Completed — 8/8 passed (run ac649048)
 Priority 5 functional test P11	Completed — 1/1 passed (run 89fe8258)
 DB state after Priority 5	Verified — credentials=1, refresh_tokens=0, active_tokens=0, user=active
-Stale files cleanup	Completed — none remain
-Rebuild of securebiz-lab-api:latest	PENDING — critical debt
-git commit / push of Priority 5 changes	PENDING
-Migration of IAM routes to get_authenticated_tenant_context	PENDING — Priority 6
-Debug-header removal from get_tenant_context	PENDING — Priority 6
-tests/test_isolation.py migration to JWT	PENDING — Priority 6 or 9
+
+v14 additions (new):
+Image rebuild of securebiz-lab-api:latest	Completed — 3c0514b01d3b, 305 MB, packages in image
+Container aligned on rebuilt image	Completed — image IDs identical
+Git commit of Priority 5	Completed — 158aeb4
+Git commit of Priority 5 documentation	Completed — ff7d60a
+Git commit of Priority 6	Completed — a65f27b
+Git push of all commits	Completed — origin/main on a65f27b
+Working tree clean	Completed — git status --short empty
+Migration of IAM routes to get_authenticated_tenant_context	Completed — verified by grep, commit a65f27b
+tests/test_isolation.py migration to JWT	Completed — 4/4 passed, commit a65f27b
+Logout cleanup asserted in tests	Completed — status_code == 200 and status == "logged out"
+Refresh-token store cleanup	Completed — 11 total, 0 active
+Pre-existing residues revoked via service layer	Completed — 7 families revoked via revoke_family
+Backup files removed	Completed — 3 F1 + 1 F2
+
+Pending:
 Provisioning endpoint for Argon2id hashes	PENDING — Priority 8
 state_check.py extension (auth_session, get_user_status, credentials)	PENDING — Priority 9
-Runtime tenant-isolation tests under JWT	PENDING — Priority 9
+Runtime tenant-isolation tests under JWT for /users and /roles	PENDING — Priority 9
 Full transaction lifecycle tests	PENDING — Priority 9
+Removal of dead get_tenant_context	OPEN — retained for backward compatibility
+.gitattributes CRLF policy	PENDING — Priority 10
+app/main.py lifespan migration (on_event deprecated)	PENDING — Priority 10
 
 26. NEXT PRIORITIES
-The following priorities are ordered by dependency. Priority 6 cannot start before the rebuild (Priority 7) is validated, because the container restart would lose the Priority 5 packages and crash the API. Priority 7 must therefore be treated as a prerequisite, even if numbered separately.
 
-Priority 6 — Migrate IAM routes to get_authenticated_tenant_context
-
-Objective: replace get_tenant_context (debug headers) with get_authenticated_tenant_context (JWT + X-Organization-Id) on the three IAM routes.
-
-Files to modify:
-- app/api/routes/users.py
-- app/api/routes/organizations.py
-- app/api/routes/roles.py
-
-Steps:
-1. In each file, change:
-   from app.api.dependencies import get_tenant_context
-   to:
-   from app.api.dependencies import get_authenticated_tenant_context
-2. In each route, change:
-   Depends(get_tenant_context)
-   to:
-   Depends(get_authenticated_tenant_context)
-3. Update tests/test_isolation.py:
-   - Obtain a JWT via POST /auth/login with test-user@test.com / TestPassword!2026.
-   - Send Authorization: Bearer <jwt>.
-   - Send X-Organization-Id: 1a40e607-b991-4b06-ad1f-13106d65b12a instead of X-Debug-Org-Id.
-   - Remove X-Debug-User-Id.
-4. Verify /users, /organizations/me, /roles return the expected data with a valid JWT and the correct X-Organization-Id.
-5. Verify the routes return 401 without a JWT.
-6. Verify the routes return 400 without X-Organization-Id.
-7. Verify a JWT for a user without an active membership in X-Organization-Id returns 403 (from the SQL refusal "Inactive or unauthorized user membership").
-8. Do NOT remove get_tenant_context yet. It stays in dependencies.py for backward compatibility (some internal tests may still use it).
-
-Test user: test-user@test.com / TestPassword!2026 (test credential only). The credential is in auth_private.credentials (1 row).
-
-Important: after this migration, the /users, /organizations/me, /roles routes no longer accept X-Debug-* headers. Any caller relying on the debug path will break. This is intentional.
-
-Priority 7 — Rebuild securebiz-lab-api:latest image (critical debt)
-
-Objective: persist PyJWT 2.10.1, argon2-cffi 25.1.0, email-validator 2.2.0, httpx 0.28.1, httpx2 2.16.0 in the image, so that any container restart keeps the API functional.
-
-Observed problem: docker compose build api fails on PyPI timeout (ReadTimeoutError on files.pythonhosted.org). Two occurrences on 12 November 2026. The network is reachable (python:3.12-slim pull succeeds), so the issue is intermittent slowness on the CDN.
-
-Corrective options (in order of preference):
-
-Option 1 (recommended) — increase pip timeout and retries in Dockerfile:
-Modify the Dockerfile line 9 from:
-    RUN pip install --no-cache-dir -r requirements.txt
-to:
-    RUN pip install --no-cache-dir --timeout 120 --retries 5 -r requirements.txt
-
-Option 2 — Use a PyPI mirror:
-    RUN pip install --no-cache-dir --timeout 120 --retries 5 \
-        -i https://mirrors.aliyun.com/pypi/simple/ \
-        --trusted-host mirrors.aliyun.com \
-        -r requirements.txt
-
-Option 3 — If both fail with TLS timeouts, inspect Docker MTU. Run:
-    docker run --rm --network host python:3.12-slim python -c "import urllib.request as u; print(len(u.urlopen('https://files.pythonhosted.org/packages/source/c/cryptography/cryptography-50.0.2.tar.gz', timeout=30).read()))"
-If --network host works but the default bridge does not, add "mtu": 1400 to Docker Desktop daemon.json.
-
-After successful build:
-1. docker compose up -d --force-recreate api
-2. Wait 5 seconds.
-3. Verify docker ps shows securebiz-api Up.
-4. Verify /openapi.json returns Total paths: 8.
-5. Verify inside the container:
-   - PyJWT 2.10.1
-   - argon2-cffi 25.1.0
-   - email-validator 2.2.0
-   - httpx 0.28.1
-
-Note: httpx2 is only needed for TestClient. If future tests use httpx.AsyncClient directly, httpx2 is not strictly required. Currently, TestClient still imports it, so include it in requirements.txt for compatibility.
-
-Priority 8 — Provisioning endpoint or script for Argon2id hashes
-
+Priority 8 — Provisioning endpoint or script for Argon2id hashes (next)
 Objective: create a controlled way to provision new users with Argon2id password hashes.
 
 Constraints:
@@ -2513,19 +2617,23 @@ Design decisions to make:
 - Who can invoke it? (No admin role defined yet.)
 - How does the plaintext password reach the provisioner? (Manual entry, or generated, or SMTP invite flow?)
 
-This is a non-trivial design. Defer to a dedicated priority once Priorities 6 and 7 are closed.
+This is a non-trivial design. A dedicated priority is required.
 
 Priority 9 — Tests and state_check extension
-
-- Unit tests for jwt.py: already covered in Bloc C (18/18).
 - Unit tests for refresh.py: P1-P8 and P11 done manually, but not in tests/.
 - Integration tests for /auth/*: manual only.
-- Tenant isolation tests under JWT: pending (depends on Priority 6).
-- Full transaction lifecycle tests: pending (cleanup failure, commit failure, rollback failure, connection close on each path).
+- Tenant isolation tests under JWT for /users and /roles (F2 covers /organizations/me only).
+- Full transaction lifecycle tests: cleanup failure, commit failure, rollback failure, connection close on each path.
 - Extend scripts/state_check.py to check:
-  - auth_session.refresh_tokens (table exists, count)
+  - auth_session.refresh_tokens (table exists, count, active=0)
   - auth_session.get_user_status (EXECUTE ACL, behavior)
   - auth_private.credentials (count, no hash leaked)
+
+Priority 10 — Hygiene and deprecations
+- Add .gitattributes to formalize the LF/CRLF policy.
+- Migrate @app.on_event("startup") to lifespan= in app/main.py.
+- Evaluate removal of get_tenant_context (dead code) after confirming no test or internal caller uses it.
+- Migrate init_vault_key() to a separate administrative path (out of the runtime API).
 
 27. KNOWN PITFALLS
 
@@ -2557,14 +2665,12 @@ v12 pitfalls (unchanged):
 - Do not rerun the completed 22-policy RLS inspection.
 - Do not repeat the five critical function inspections without a specific reason.
 - Do not interpret the zero-row role-write search as proof that no role-writing path exists.
-- Do not treat the absence of a global SECURITY DEFINER inventory output in an earlier document as proof that the user never executed that query.
 - Do not rerun the global SECURITY DEFINER inventory.
 - Do not assume the 25 pgsodium routines are application-defined functions.
 - Do not assume that a function being executable only by securebiz_owner proves that an administrative invocation mechanism exists.
 - Do not grant public-key administration or purge functions to runtime roles without a dedicated security design.
 - Do not treat function EXECUTE ACLs as a complete analysis of indirect execution paths.
 - Do not assume that the current transaction cleanup has been exhaustively tested.
-- Do not run the global SECURITY DEFINER inventory again as the next operation.
 - Do not treat the hardcoded UUIDs in scripts/state_check.py as secrets.
 - Do not rely on EXPECTED_PUBKEY_HEX after a Vault container recreation.
 - Do not add a RESTRICTIVE policy without inspecting the existing PERMISSIVE model.
@@ -2585,79 +2691,97 @@ v12 pitfalls (unchanged):
 - get_user_status returns NULL for unknown users.
 - get_user_status is VOLATILE, not STABLE.
 
-v13 additions (new):
+v13 pitfalls (unchanged):
 - Do not use client.cookies.set() with httpx.ASGITransport. Cookies are stored but not injected in subsequent requests. Use headers={"Cookie": f"refresh_token={token}"} for replay tests.
-- Do not assume TestClient works out of the box. Starlette 1.10.0 TestClient requires httpx2, which is a separate package from httpx. Installing httpx2 is needed if TestClient is used.
-- Do not check $LASTEXITCODE after docker exec psql UPDATE or docker cp. PowerShell sets it to 1 on stderr writes even on success. Verify the DB state (SELECT) or Test-Path instead.
-- Do not run a script with $ErrorActionPreference = "Stop" if it calls docker exec / docker cp. Use local Continue + try/finally.
-- Do not assume psql -t -A with RETURNING returns a single line. It returns the value plus INSERT 0 1. Parse with regex.
-- Do not use 'inactive' for user status. users_status_check allows only 'active', 'disabled', 'pending'. Use 'disabled' to disable a user.
-- Do not execute fragments of function Invoke-BlockX { ... }. Variables are undefined in global scope, throw runs without finally, state is silently corrupted. Always execute the entire block.
-- Do not confuse docker compose build api with a config change. It reads Dockerfile and requirements.txt, builds an image. It does not modify docker-compose.yml, Dockerfile, requirements.txt, .env, containers, or volumes. But docker compose up -d --force-recreate api DOES recreate the API container.
-- Do not assume PyPI timeouts are permanent. Retry docker compose build api. If persistent, increase --timeout and --retries in the Dockerfile, or use a mirror.
-- Do not use RefreshTokenError for DB failures. RefreshTokenError is business validation (401). RefreshTokenDatabaseError is infrastructure (503). They inherit from different bases on purpose.
-- Do not remove the advisory lock on family_id. It prevents concurrent rotation and revocation from corrupting the family. Order must be family first, then row, uniformly across rotate/revoke/revoke_by_raw.
-- Do not call cleanup_context() after a rollback. The transaction context is already gone.
-- Do not assume get_current_user maps all exceptions to 503. Only RuntimeError (Vault) maps to 503. Any other unexpected exception maps to 500. A programming bug is not an infrastructure failure.
-- Do not assume get_authenticated_tenant_context maps all psycopg.Error to 503. Only psycopg.OperationalError maps to 503. Other psycopg.Error are classified by primary message: "Inactive or unauthorized user membership" -> 403, "Token expired" / "Unknown or revoked signing key" -> 503, all others -> 500. Token replay detected and Invalid Ed25519 signature map to 500, not 401.
-- Do not log the token, the secret, the password hash, the user_id, or the jti in authentication logs. Only log the class of failure.
-- Do not use cookies.set() to simulate replay. Use headers={"Cookie": f"refresh_token={token}"}.
-- Do not commit Priority 5 changes before the rebuild is validated. The rebuild must be done first, then git add -A, git commit, git push.
+- Do not assume TestClient works out of the box. Starlette 1.10.0 TestClient requires httpx2. Installing httpx2 is needed if TestClient is used.
+- Do not check $LASTEXITCODE after docker exec psql UPDATE or docker cp.
+- Do not run a script with $ErrorActionPreference = "Stop" if it calls docker exec / docker cp.
+- Do not assume psql -t -A with RETURNING returns a single line.
+- Do not use 'inactive' for user status.
+- Do not execute fragments of function Invoke-BlockX { ... }.
+- Do not confuse docker compose build api with a config change.
+- Do not assume PyPI timeouts are permanent.
+- Do not use RefreshTokenError for DB failures.
+- Do not remove the advisory lock on family_id.
+- Do not call cleanup_context() after a rollback.
+- Do not assume get_current_user maps all exceptions to 503.
+- Do not assume get_authenticated_tenant_context maps all psycopg.Error to 503.
+- Do not log the token, the secret, the password hash, the user_id, or the jti in authentication logs.
+- Do not use cookies.set() to simulate replay.
 
-28. EXACT CONTINUATION POINT — VERSION 13
+v14 pitfalls (new):
+- Do not use naive Contains() guards in PowerShell if the file may contain a matching docstring. Reformulate the docstring or restrict the guard.
+- Do not call _logout() in a finally without asserting its response. A 503 must fail the test.
+- Do not create a refresh-token family without revoking it. Every /auth/login in a test must be paired with a /auth/logout in finally.
+- Do not DELETE rows from auth_session.refresh_tokens. Revocation is by UPDATE revoked_at, via the service layer.
+- Do not assume revoke_family raises on an unknown family. It is a silent no-op.
+- Do not assume WriteAllText preserves an existing UTF-8 BOM. It does not if the encoding is UTF-8 without BOM.
+- Do not treat the git LF/CRLF warning as a failure.
+- Do not assume that because Priority 5 is committed, Priority 6 is also committed. Verify git log.
+- Do not assume the running container is on the latest image. Compare docker inspect securebiz-api image ID with docker images :latest ID.
+- Do not remove get_tenant_context without first confirming that no internal caller or test uses it.
+- Do not use httpx2 in a new test unless TestClient is genuinely required.
 
-Priority 5 is CLOSED. All 9 functional tests passed on 12 November 2026 (P1-P8 and P11).
+28. EXACT CONTINUATION POINT — VERSION 14
+
+Priority 5 and Priority 6 are CLOSED. All functional tests passed on 12 November 2026:
+- Priority 5: P1-P8 (8/8) and P11 (1/1).
+- Priority 6: F2 (4/4).
 
 Verified DB state (after tests and cleanup):
 - auth_private.credentials : 1 row (test credential, Argon2id, test-user@test.com)
-- auth_session.refresh_tokens : 0 rows
-- auth_session active_tokens : 0
+- auth_session.refresh_tokens : 11 rows, 0 active
 - public.users : 1 row (status = active)
 - public.memberships : 1 row (active, user in org 1a40e607-b991-4b06-ad1f-13106d65b12a)
 
 Verified API state:
-- securebiz-api container: Up 2 hours (old image, no rebuild yet)
-- /openapi.json: 8 paths (/ , /health, /users, /organizations/me, /roles, /auth/login, /auth/refresh, /auth/logout)
-- Packages in running container: PyJWT 2.10.1, argon2-cffi 25.1.0, email-validator 2.2.0, httpx 0.28.1, httpx2 2.16.0
-- Packages in image: NONE of the above (image is v12 state)
-- Stale files: none remain
+- securebiz-api container: running from the rebuilt image (sha256:3c0514b0...).
+- /openapi.json: 8 paths.
+- Packages in image: jwt 2.10.1, argon2 25.1.0, email-validator 2.2.0, httpx 0.28.1.
+- Stale files: none remain.
 
-The immediate next operation is the REBUILD of the API image (Priority 7). This is a prerequisite, not a follow-up. Any restart of the container without the rebuild will crash the API.
+Verified git state:
+- 4 commits: 2362024, 158aeb4, ff7d60a, a65f27b.
+- HEAD -> main and origin/main both on a65f27b.
+- Working tree clean.
 
-The rebuild has failed twice on 12 November 2026 (PyPI timeout). The correctives are listed in Section 26 Priority 7. The first one (increase timeout/retries in Dockerfile) is recommended.
+The immediate next operation is Priority 8 (provisioning endpoint or script for Argon2id hashes). Priority 6 is closed, no rebuild is pending, no commit is pending.
 
-Once the rebuild is validated (Total paths: 8, packages importable in the container after force-recreate), Priority 6 (route migration) can start.
+The first sub-step of Priority 8 is a design decision, not a code change:
+- Endpoint (POST /admin/users) or script (scripts/provision_user.py)?
+- Who can invoke it? (No admin role defined yet.)
+- How does the plaintext password reach the provisioner? (Manual entry, or generated, or SMTP invite flow?)
 
-After Priority 6 is validated (routes return 200 with a valid JWT, 401 without, 400 without X-Organization-Id, 403 with inactive membership), Priority 8 (provisioning) and Priority 9 (tests) follow.
+Do not start Priority 8 code before these three decisions are documented.
+
+After Priority 8, Priority 9 (extended tests and state_check extension) and Priority 10 (hygiene and deprecations) follow.
 
 Do not restart the project.
 Do not repeat completed inspections.
-Do not reproduce Version 12 as if Priority 5 had not been implemented.
+Do not reproduce Version 13 as if Priority 5 and Priority 6 were not implemented.
 Do not invent implementation details.
 Do not weaken security to pass tests.
-Do not skip the rebuild. It is not cosmetic; it is required for the API to survive a restart.
+Do not assume the rebuild is pending. It is done.
 
-Immediate next step: apply the Dockerfile pip timeout/retries correction, then docker compose build api, then docker compose up -d --force-recreate api, then verify 8 paths and package versions.
+Immediate next step: document the three Priority 8 design decisions before any code change.
 
 Preserve all existing data, Docker volumes, database security boundaries and unrelated containers.
 
 29. FINAL HANDOVER RULE
 
-Continue SecureBiz Lab from this exact Version 13 state.
+Continue SecureBiz Lab from this exact Version 14 state.
 
-The project has completed Priority 5 (Authentication and Session Management). All 9 functional tests (P1-P8 and P11) passed on 12 November 2026 with real DB state verification.
+The project has completed Priority 5 (Authentication and Session Management) and Priority 6 (IAM route migration to JWT, isolation test migration). All functional tests passed on 12 November 2026: P1-P8, P11, F2. The image has been rebuilt and the container runs from the rebuilt image. Priority 5 and Priority 6 are committed and pushed.
 
-The next phase is the rebuild of the API image (prerequisite), followed by Priority 6 (migration of IAM routes to JWT), Priority 8 (provisioning), and Priority 9 (tests and state_check extension).
+The next phase is Priority 8 (provisioning endpoint or script for Argon2id hashes), preceded by the documentation of three design decisions (endpoint vs script, caller, plaintext password transport).
 
 Do not restart the project.
 Do not repeat completed inspections.
-Do not reproduce Version 12 as if Priority 5 had not been implemented.
+Do not reproduce Version 13 as if Priority 5 and Priority 6 were not implemented.
 Do not invent implementation details.
 Do not weaken security to pass tests.
-Do not skip the rebuild.
+Do not assume the rebuild is pending. It is done.
 
-Immediate next step: apply the Dockerfile pip timeout/retries correction, then rebuild the image, then Priority 6.
+Immediate next step: document the three Priority 8 design decisions, then design and implement provisioning.
 
 Preserve all existing data, Docker volumes, database security boundaries and unrelated containers.
-
---- FIN DU MESSAGE 3/3 ---
