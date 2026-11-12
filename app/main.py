@@ -30,6 +30,7 @@ from app.core.vault import init_vault_key
 from app.api.routes.organizations import router as organizations_router
 from app.api.routes.users import router as users_router
 from app.api.routes.roles import router as roles_router
+from app.api.routes.auth import router as auth_router
 
 # Configure basic logging
 logging.basicConfig(
@@ -48,6 +49,7 @@ app = FastAPI(
 app.include_router(organizations_router)
 app.include_router(users_router)
 app.include_router(roles_router)
+app.include_router(auth_router)
 
 @app.on_event("startup")
 def startup_event():

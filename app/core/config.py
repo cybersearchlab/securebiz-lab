@@ -1,18 +1,18 @@
-﻿"""
+"""
 app/core/config.py
 ================================================================================
 SecureBiz Lab - Application Configuration
 ================================================================================
 
 Responsibilities:
-    • Load environment variables at startup.
-    • Validate the presence and format of critical configuration values.
-    • Expose a single, immutable `settings` object for the rest of the app.
+    â€¢ Load environment variables at startup.
+    â€¢ Validate the presence and format of critical configuration values.
+    â€¢ Expose a single, immutable `settings` object for the rest of the app.
 
 This file MUST NOT contain:
-    • Database connections (see `database.py`).
-    • Cryptographic keys or secrets (handled by Vault).
-    • Business logic or API routes.
+    â€¢ Database connections (see `database.py`).
+    â€¢ Cryptographic keys or secrets (handled by Vault).
+    â€¢ Business logic or API routes.
 
 Security Note:
     In a Docker environment, environment variables are injected by Docker
@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     DB_NAME: str = Field(..., min_length=1)
     DB_USER: str = Field(..., min_length=1)
     DB_PASSWORD: str = Field(..., min_length=1)
+    AUTH_DB_USER: str = Field(..., min_length=1)
+    AUTH_DB_PASSWORD: str = Field(..., min_length=1)
+    # JWT settings (non-secret; the HS256 secret lives in Vault).
+    # These parameters are validated and non-secret, so they are configurable
+    # via environment variables. The algorithm is NOT configurable: it is
+    # hard-coded as HS256 in app/core/jwt.py.
+    JWT_ISSUER: str = Field("securebiz-api", min_length=1)
+    JWT_AUDIENCE: str = Field("securebiz-api", min_length=1)
+    JWT_ACCESS_TTL_SECONDS: int = Field(900, ge=60, le=86400)
+    REFRESH_TTL_DAYS: int = Field(7, ge=1, le=30)
 
 
 # Singleton instance used throughout the application.

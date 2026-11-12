@@ -1,4 +1,4 @@
-﻿"""
+"""
 app/core/vault.py
 ================================================================================
 SecureBiz Lab - HashiCorp Vault Integration
@@ -209,3 +209,213 @@ def sign_payload(payload_json: str) -> tuple[bytes, str, int]:
         )
 
     return sig_bytes, vault_version, key_version
+
+# ============================================================================
+# JWT HS256 secret (KV-v2)
+# ============================================================================
+#
+# The JWT signing secret is stored in Vault KV-v2 at:
+#     secret/data/securebiz/jwt
+# with the shape:
+#     {
+#       "current":      "<64 hex chars = 32 bytes>",
+#       "current_kid":  "<non-empty string>",
+#       "previous":     "<64 hex chars>" or "",
+#       "previous_kid": "<non-empty string>" or ""
+#     }
+#
+# 64 hex chars encode exactly 32 bytes, i.e. 256 bits of entropy. The value
+# is decoded to raw bytes so it can be used directly as the HS256 key.
+#
+# The result is cached at module level. Call invalidate_jwt_secret_cache()
+# to force a reload (e.g. after a rotation, in tests).
+# ============================================================================
+
+JWT_SECRET_PATH = "secret/data/securebiz/jwt"
+
+_JWT_SECRET_CACHE: tuple[bytes, str, bytes | None, str | None] | None = None
+
+
+def _validate_jwt_secret_field(name: str, value: object) -> bytes:
+    """
+    Validate and decode one HS256 secret field.
+
+    Accepts a non-empty string of 64 hex chars (32 bytes).
+    Raises RuntimeError with a message that does NOT include the value.
+    """
+    if not isinstance(value, str):
+        raise RuntimeError(f"Vault JWT secret: '{name}' must be a string") from None
+    stripped = value.strip()
+    if not stripped:
+        raise RuntimeError(f"Vault JWT secret: '{name}' is empty") from None
+    if len(stripped) != 64:
+        raise RuntimeError(
+            f"Vault JWT secret: '{name}' must be exactly 64 hex chars "
+            f"(got {len(stripped)})"
+        ) from None
+    try:
+        raw = bytes.fromhex(stripped)
+    except ValueError:
+        # Do NOT include 'stripped' in the message.
+        raise RuntimeError(
+            f"Vault JWT secret: '{name}' is not valid hexadecimal"
+        ) from None
+    if len(raw) != 32:
+        raise RuntimeError(
+            f"Vault JWT secret: '{name}' must decode to exactly 32 bytes "
+            f"(got {len(raw)})"
+        ) from None
+    return raw
+
+
+def _validate_jwt_kid(name: str, value: object) -> str:
+    """Validate one kid field. Returns the trimmed string."""
+    if not isinstance(value, str) or not value.strip():
+        raise RuntimeError(
+            f"Vault JWT secret: '{name}' must be a non-empty string"
+        ) from None
+    return value.strip()
+
+
+def _normalize_optional(value: object) -> str | None:
+    """
+    Normalize a previous* field: None and "" map to None; a non-empty
+    string is returned trimmed. Any other type is REJECTED explicitly
+    (no silent conversion to None).
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RuntimeError(
+            "Vault JWT secret: previous/previous_kid must be a string or null"
+        ) from None
+    stripped = value.strip()
+    return stripped or None
+
+
+def get_jwt_secret() -> tuple[bytes, str, bytes | None, str | None]:
+    """
+    Load the HS256 JWT signing secret from Vault KV-v2.
+
+    Path: secret/data/securebiz/jwt
+
+    Returns:
+        (current_secret, current_kid, previous_secret, previous_kid)
+        - current_secret:  32 bytes
+        - current_kid:     non-empty str
+        - previous_secret: 32 bytes, or None if no rotation in progress
+        - previous_kid:    non-empty str, or None if no rotation in progress
+
+    Caches the result at module level. Subsequent calls return the cached
+    tuple; call invalidate_jwt_secret_cache() to force a reload.
+
+    Raises:
+        RuntimeError: if Vault is unreachable, returns a non-200 status,
+            the secret path is missing, the response is malformed, or any
+            field fails validation. The secret value is NEVER included in
+            error messages, and the original exception is NOT chained
+            (from None) to avoid leaking response bodies into tracebacks.
+    """
+    global _JWT_SECRET_CACHE
+
+    if _JWT_SECRET_CACHE is not None:
+        return _JWT_SECRET_CACHE
+
+    if not VAULT_TOKEN:
+        raise RuntimeError("VAULT_TOKEN is not configured") from None
+
+    url = f"{VAULT_ADDR}/v1/{JWT_SECRET_PATH}"
+
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=5)
+    except requests.exceptions.RequestException as exc:
+        # Only the exception class name is logged; no URL, no body.
+        raise RuntimeError(
+            f"Vault JWT secret: request failed ({type(exc).__name__})"
+        ) from None
+
+    if r.status_code == 403:
+        raise RuntimeError(
+            "Vault JWT secret: token lacks permission to read "
+            f"{JWT_SECRET_PATH}. Check the Vault token policy."
+        ) from None
+    if r.status_code == 404:
+        raise RuntimeError(
+            f"Vault JWT secret: not found at {JWT_SECRET_PATH}. "
+            "Provision it with 'vault kv put'."
+        ) from None
+    if r.status_code != 200:
+        raise RuntimeError(
+            f"Vault JWT secret: unexpected HTTP {r.status_code} "
+            f"reading {JWT_SECRET_PATH}"
+        ) from None
+
+    try:
+        body = r.json()
+    except ValueError:
+        raise RuntimeError("Vault JWT secret: response is not valid JSON") from None
+
+    # body must be a JSON object before any key access.
+    if not isinstance(body, dict):
+        raise RuntimeError(
+            "Vault JWT secret: response root is not a JSON object"
+        ) from None
+
+    try:
+        data = body["data"]["data"]
+    except (KeyError, TypeError):
+        raise RuntimeError(
+            "Vault JWT secret: response missing data.data "
+            "(expected KV-v2 shape)"
+        ) from None
+
+    if not isinstance(data, dict):
+        raise RuntimeError("Vault JWT secret: data.data is not an object") from None
+
+    # Required fields.
+    if "current" not in data:
+        raise RuntimeError("Vault JWT secret: missing 'current' field") from None
+    if "current_kid" not in data:
+        raise RuntimeError("Vault JWT secret: missing 'current_kid' field") from None
+
+    current_secret = _validate_jwt_secret_field("current", data["current"])
+    current_kid = _validate_jwt_kid("current_kid", data["current_kid"])
+
+    # Optional rotation fields.
+    prev_secret_raw = _normalize_optional(data.get("previous"))
+    prev_kid_raw = _normalize_optional(data.get("previous_kid"))
+
+    if (prev_secret_raw is None) != (prev_kid_raw is None):
+        raise RuntimeError(
+            "Vault JWT secret: 'previous' and 'previous_kid' must be "
+            "provided together or both empty"
+        ) from None
+
+    if prev_secret_raw is None:
+        previous_secret: bytes | None = None
+        previous_kid: str | None = None
+    else:
+        previous_secret = _validate_jwt_secret_field("previous", prev_secret_raw)
+        previous_kid = _validate_jwt_kid("previous_kid", prev_kid_raw)
+
+    _JWT_SECRET_CACHE = (
+        current_secret,
+        current_kid,
+        previous_secret,
+        previous_kid,
+    )
+    logger.info(
+        "Vault JWT secret loaded (kid=%s, rotation_in_progress=%s)",
+        current_kid,
+        previous_kid is not None,
+    )
+    return _JWT_SECRET_CACHE
+
+
+def invalidate_jwt_secret_cache() -> None:
+    """
+    Clear the cached JWT secret so the next get_jwt_secret() call reloads it
+    from Vault. Intended for tests and hot rotation scenarios.
+    """
+    global _JWT_SECRET_CACHE
+    _JWT_SECRET_CACHE = None

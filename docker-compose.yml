@@ -51,6 +51,8 @@
       DB_NAME: ${POSTGRES_DB}
       DB_USER: ${APP_DB_USER}
       DB_PASSWORD: ${APP_DB_PASSWORD}
+      AUTH_DB_USER: securebiz_auth
+      AUTH_DB_PASSWORD: ${AUTH_DB_PASSWORD}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: ${VAULT_DEV_ROOT_TOKEN}
       APP_ENV: development
