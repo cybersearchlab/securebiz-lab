@@ -1,4 +1,4 @@
-﻿
+
 """
 SecureBiz Lab - IAM routes: organizations.
 """
@@ -6,7 +6,7 @@ SecureBiz Lab - IAM routes: organizations.
 from fastapi import APIRouter, Depends, HTTPException, status
 from psycopg import Connection
 
-from app.api.dependencies import get_tenant_context
+from app.api.dependencies import get_authenticated_tenant_context
 
 router = APIRouter(
     prefix="/organizations",
@@ -16,12 +16,12 @@ router = APIRouter(
 
 @router.get("/me")
 def get_my_organization(
-    connection: Connection = Depends(get_tenant_context),
+    connection: Connection = Depends(get_authenticated_tenant_context),
 ):
     """
     Return the organization associated with the signed tenant context.
 
-    PostgreSQL RLS restricts visibility to the current organization.
+    Authentication: JWT via get_current_user. PostgreSQL RLS restricts visibility to the current organization.
     The dependency owns the transaction lifecycle.
     """
     with connection.cursor() as cur:

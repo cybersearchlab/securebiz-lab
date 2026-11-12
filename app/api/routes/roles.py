@@ -1,11 +1,11 @@
-﻿"""
+"""
 SecureBiz Lab - IAM routes: roles.
 """
 
 from fastapi import APIRouter, Depends
 from psycopg import Connection
 
-from app.api.dependencies import get_tenant_context
+from app.api.dependencies import get_authenticated_tenant_context
 
 router = APIRouter(
     prefix="/roles",
@@ -15,12 +15,12 @@ router = APIRouter(
 
 @router.get("")
 def list_roles(
-    connection: Connection = Depends(get_tenant_context),
+    connection: Connection = Depends(get_authenticated_tenant_context),
 ):
     """
     List roles belonging to the current organization.
 
-    PostgreSQL RLS enforces tenant isolation and the roles:read permission.
+    Authentication: JWT via get_current_user. PostgreSQL RLS enforces tenant isolation and the roles:read permission.
     """
     with connection.cursor() as cur:
         cur.execute(
