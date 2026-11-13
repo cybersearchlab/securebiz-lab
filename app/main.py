@@ -1,4 +1,4 @@
-﻿"""
+"""
 app/main.py
 ================================================================================
 SecureBiz Lab - FastAPI Application Entry Point
@@ -19,6 +19,7 @@ This file MUST NOT contain:
 
 # 1. Standard library
 import logging
+from contextlib import asynccontextmanager
 
 # 2. Third-party
 from fastapi import FastAPI, HTTPException
@@ -39,10 +40,18 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Starting SecureBiz Lab API...")
+    init_vault_key()
+    yield
+
+
 app = FastAPI(
     title="SecureBiz Lab API",
     description="Security assessment and DevSecOps laboratory for business applications.",
     version="0.3.0",
+    lifespan=lifespan,
 )
 
 # Register API routers
@@ -51,13 +60,6 @@ app.include_router(users_router)
 app.include_router(roles_router)
 app.include_router(auth_router)
 
-@app.on_event("startup")
-def startup_event():
-    """
-    Actions executed when the FastAPI application starts.
-    """
-    logger.info("Starting SecureBiz Lab API...")
-    init_vault_key()
 
 
 @app.get("/")

@@ -61,7 +61,7 @@ def _parse_uuid(value: str, header_name: str) -> str:
         return str(uuid.UUID(value.strip()))
     except (ValueError, AttributeError, TypeError):
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Header {header_name} must be a valid UUID.",
         )
 
