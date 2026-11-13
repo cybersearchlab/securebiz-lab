@@ -2,8 +2,8 @@
 
 **Security Assessment & DevSecOps for Business Applications**
 
-> Document status: v0.5.1 — November 12, 2026
-> Project status: Technical prototype — cryptographic architecture validated, authentication layer implemented, 102 automated tests (98 host + 4 container)
+> Document status: v0.6.0 — November 13, 2026
+> Project status: Technical prototype — cryptographic architecture validated, authentication layer implemented, 132 automated tests (108 host + 24 container)
 
 ## 1. Overview
 
@@ -83,6 +83,27 @@ The following authentication features are implemented and verified by 9/9 functi
 
 **Not yet migrated**: the IAM routes (`/users`, `/organizations/me`, `/roles`) still use the development debug-header path (`X-Debug-User-Id`, `X-Debug-Org-Id`). Migration to `get_authenticated_tenant_context()` is planned for Priority 6.
 
+### 2.6 Automated test coverage
+
+As of v0.6.0, **132 automated tests** are persisted in `tests/`:
+
+| File | Tests | Type | Verified |
+| :--- | ---: | :--- | :--- |
+| `test_jwt.py` | 38 | Host (mocked) | 38/38 |
+| `test_refresh.py` | 31 | Host (mocked) | 31/31 |
+| `test_auth_routes.py` | 18 | Host (mocked) | 18/18 |
+| `test_provision_user.py` | 11 | Host (mocked) | 11/11 |
+| `test_dependencies_lifecycle.py` | 10 | Host (mocked) | 10/10 |
+| `test_isolation.py` (F2) | 4 | Container | 4/4 |
+| `test_isolation_users.py` | 4 | Container | 4/4 |
+| `test_isolation_roles.py` | 4 | Container | 4/4 |
+| `test_refresh_db.py` | 12 | Container (real PostgreSQL) | 12/12 |
+
+**Total: 132 tests** (108 host + 24 container).
+
+The host tests run with `-W error::DeprecationWarning` (no deprecation
+warnings since Priority 10). The container tests require the API
+container (Docker-internal DNS `db:5432`, `vault:8200`).
 ## 3. Current Architecture
 
 ```text
