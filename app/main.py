@@ -27,7 +27,6 @@ from psycopg import OperationalError
 
 # 3. Local
 from app.core.database import get_database_session # <-- CHANGEMENT ICI
-from app.core.vault import init_vault_key
 from app.api.routes.organizations import router as organizations_router
 from app.api.routes.users import router as users_router
 from app.api.routes.roles import router as roles_router
@@ -43,7 +42,12 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting SecureBiz Lab API...")
-    init_vault_key()
+    logger.info(
+        "Vault provisioning is an ADMIN operation. "
+        "Run 'python scripts/init_vault.py' inside the container "
+        "before using the API. If Vault was restarted in -dev mode, "
+        "the Ed25519 key and JWT secret must be re-provisioned."
+    )
     yield
 
 

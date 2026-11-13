@@ -55,7 +55,12 @@ def init_vault_key() -> None:
     """
     Initialize the Ed25519 key in Vault Transit.
 
-    Idempotent: safe to call on every startup.
+    ADMIN ONLY. Must be invoked from scripts/init_vault.py, NOT from the
+    API runtime (Priority 10 separation). The API no longer calls this
+    function; it only logs a warning at startup if Vault is not
+    provisioned.
+
+    Idempotent: safe to call multiple times.
     Raises RuntimeError if Vault is unreachable or returns a real error.
 
     Distinguishes:
