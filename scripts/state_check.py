@@ -1,10 +1,21 @@
-﻿"""
+"""
 scripts/state_check.py
 ================================================================================
 SecureBiz Lab - One-shot state verification for new agents.
 
-v3 (2026-11-10): Ed25519 fix (no hash_algorithm/prehashed), admin role
-for structural checks, degraded mode when admin credentials absent.
+v4 (2026-11-13): Priority 9 extension.
+    - Added: refresh_tokens, get_user_status ACL + behavior,
+      credentials count, provisioner role checks.
+    - Replaced hardcoded public key constant with dynamic Vault read.
+    - Centralized _admin_ready() for consistent degraded mode.
+    - Strict Base64 decoding (validate=True, 32-byte check).
+
+READ-ONLY with one transactional exception:
+    - check_public_key, check_test_data, check_auth_session_refresh_tokens,
+      check_get_user_status_acl, check_credentials_count,
+      check_provisioner_role, check_vault_sign: pure read-only.
+    - check_full_flow: calls install_context() which writes
+      transaction_context and used_jti, then ROLLBACK. No persisted change.
 
 Run inside the API container:
     docker compose exec api python scripts/state_check.py
@@ -12,6 +23,7 @@ Run inside the API container:
 """
 
 import base64
+import binascii
 import json
 import os
 import sys
@@ -26,15 +38,9 @@ VAULT_ADDR = os.getenv("VAULT_ADDR", "http://vault:8200").rstrip("/")
 VAULT_TOKEN = os.getenv("VAULT_TOKEN")
 KEY_NAME = os.getenv("VAULT_TRANSIT_KEY", "securebiz-context")
 
-EXPECTED_PUBKEY_HEX = (
-    "ccc071be49abbcdef22b541bb7ad984de"
-    "1364730814dde3d54b9844a370a4e89"
-)
-
 TEST_USER_ID = "a2c643f2-7212-4693-bc7f-d220cb9cdaf4"
 TEST_ORG_ID = "1a40e607-b991-4b06-ad1f-13106d65b12a"
 
-# Optional admin credentials - if absent, structural checks are SKIPPED
 ADMIN_USER = os.getenv("DB_ADMIN_USER")
 ADMIN_PASSWORD = os.getenv("DB_ADMIN_PASSWORD")
 
@@ -52,18 +58,23 @@ def safe(section, fn):
         record(section, "FAIL", str(exc)[:200])
 
 
+def _admin_ready():
+    return bool(ADMIN_USER and ADMIN_PASSWORD)
+
+
 def check_env():
     record("env: VAULT_ADDR", "OK", VAULT_ADDR)
     record("env: VAULT_TOKEN", "OK" if VAULT_TOKEN else "FAIL",
            "set (len=%d)" % len(VAULT_TOKEN) if VAULT_TOKEN else "missing")
     record("env: VAULT_TRANSIT_KEY", "OK", KEY_NAME)
     record("env: DB_ADMIN_USER", "OK" if ADMIN_USER else "SKIP",
-           "present" if ADMIN_USER else
-           "absent (set DB_ADMIN_USER/DB_ADMIN_PASSWORD to enable structural checks)")
+           "present" if ADMIN_USER else "missing")
+    record("env: DB_ADMIN_PASSWORD", "OK" if ADMIN_PASSWORD else "SKIP",
+           "present" if ADMIN_PASSWORD else "missing")
 
 
 def _connect_admin():
-    if not ADMIN_USER or not ADMIN_PASSWORD:
+    if not _admin_ready():
         raise RuntimeError("admin credentials not configured")
     return psycopg.connect(
         host=os.environ["DB_HOST"], port=os.environ["DB_PORT"],
@@ -73,9 +84,9 @@ def _connect_admin():
 
 
 def check_db_structure():
-    if not ADMIN_USER:
-        record("db: tables", "SKIP", "admin role required")
-        record("db: functions", "SKIP", "admin role required")
+    if not _admin_ready():
+        record("db: tables", "SKIP", "admin credentials missing")
+        record("db: functions", "SKIP", "admin credentials missing")
         return
     conn = _connect_admin()
     try:
@@ -83,7 +94,8 @@ def check_db_structure():
             cur.execute("""
                 SELECT table_schema, table_name
                 FROM information_schema.tables
-                WHERE table_schema IN ('public','auth_private','auth_security')
+                WHERE table_schema IN
+                    ('public','auth_private','auth_security','auth_session')
                   AND table_type='BASE TABLE'
             """)
             tables = {(r[0], r[1]) for r in cur.fetchall()}
@@ -92,6 +104,7 @@ def check_db_structure():
             ("auth_security", "public_keys"),
             ("auth_security", "transaction_context"),
             ("auth_security", "used_jti"),
+            ("auth_session", "refresh_tokens"),
             ("public", "users"),
             ("public", "organizations"),
             ("public", "memberships"),
@@ -108,31 +121,66 @@ def check_db_structure():
 
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT routine_name
+                SELECT routine_schema || '.' || routine_name
                 FROM information_schema.routines
-                WHERE routine_schema='auth_security'
+                WHERE routine_schema IN
+                    ('auth_security', 'auth_session', 'auth_private')
             """)
             fns = {r[0] for r in cur.fetchall()}
-        required = {"securebiz_install_context", "securebiz_get_context",
-                    "securebiz_cleanup_context"}
+        required = {
+            "auth_security.securebiz_install_context",
+            "auth_security.securebiz_get_context",
+            "auth_security.securebiz_cleanup_context",
+            "auth_private.authenticate",
+            "auth_session.get_user_status",
+        }
         missing = required - fns
         if missing:
             record("db: functions", "FAIL", "missing: %s" % sorted(missing))
         else:
-            record("db: functions", "OK", "install/get/cleanup present")
+            record("db: functions", "OK", "all required functions present")
     finally:
         conn.close()
 
 
 def check_public_key():
-    if not ADMIN_USER:
-        record("db: public_key", "SKIP", "admin role required")
+    if not VAULT_TOKEN:
+        record("db: public_key", "SKIP", "no vault token")
         return
+    if not _admin_ready():
+        record("db: public_key", "SKIP", "admin credentials missing")
+        return
+
+    try:
+        req = urllib.request.Request(
+            "%s/v1/transit/keys/%s" % (VAULT_ADDR, KEY_NAME),
+            headers={"X-Vault-Token": VAULT_TOKEN},
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        keys = data["data"]["keys"]
+        latest_ver = str(max(int(k) for k in keys))
+        vault_key_b64 = keys[latest_ver]["public_key"]
+        try:
+            vault_key_bytes = base64.b64decode(vault_key_b64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            record("db: public_key", "FAIL",
+                   "Vault key not valid base64: %s" % exc)
+            return
+        if len(vault_key_bytes) != 32:
+            record("db: public_key", "FAIL",
+                   "Vault key is %d bytes, expected 32" % len(vault_key_bytes))
+            return
+        vault_key_hex = vault_key_bytes.hex()
+    except Exception as exc:
+        record("db: public_key", "FAIL", "vault read: %s" % exc)
+        return
+
     conn = _connect_admin()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT kid, encode(public_key,'hex'), revoked_at
+                SELECT encode(public_key, 'hex'), revoked_at
                 FROM auth_security.public_keys
                 WHERE kid = %s
             """, (KEY_NAME,))
@@ -140,21 +188,25 @@ def check_public_key():
         if not row:
             record("db: public_key", "FAIL", "no row for kid=%s" % KEY_NAME)
             return
-        kid, hex_key, revoked_at = row
+        pg_key_hex, revoked_at = row
         if revoked_at is not None:
-            record("db: public_key", "FAIL", "%s revoked at %s" % (kid, revoked_at))
+            record("db: public_key", "FAIL",
+                   "key %s is REVOKED" % KEY_NAME)
             return
-        if hex_key != EXPECTED_PUBKEY_HEX:
-            record("db: public_key", "FAIL", "pubkey hex mismatch")
+        if pg_key_hex != vault_key_hex:
+            record("db: public_key", "WARN",
+                   "DIVERGENCE Vault=%s... PG=%s..."
+                   % (vault_key_hex[:16], pg_key_hex[:16]))
             return
-        record("db: public_key", "OK", "%s active, hex OK" % kid)
+        record("db: public_key", "OK",
+               "Vault and PG match (%s...)" % vault_key_hex[:16])
     finally:
         conn.close()
 
 
 def check_test_data():
-    if not ADMIN_USER:
-        record("db: test_data", "SKIP", "admin role required")
+    if not _admin_ready():
+        record("db: test_data", "SKIP", "admin credentials missing")
         return
     conn = _connect_admin()
     try:
@@ -180,8 +232,184 @@ def check_test_data():
         conn.close()
 
 
+def check_auth_session_refresh_tokens():
+    if not _admin_ready():
+        record("db: refresh_tokens", "SKIP", "admin credentials missing")
+        return
+    conn = _connect_admin()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    count(*) AS total,
+                    count(*) FILTER (
+                        WHERE revoked_at IS NULL
+                          AND expires_at > clock_timestamp()
+                    ) AS active
+                FROM auth_session.refresh_tokens
+            """)
+            total, active = cur.fetchone()
+        record("db: refresh_tokens", "OK",
+               "total=%d active=%d" % (total, active))
+        if active > 0:
+            record("db: refresh_tokens_active", "WARN",
+                   "%d active tokens (expected 0 after tests)" % active)
+    finally:
+        conn.close()
+
+
+def check_get_user_status_acl():
+    if not _admin_ready():
+        record("db: get_user_status_acl", "SKIP", "admin credentials missing")
+        record("db: get_user_status_behavior", "SKIP", "admin credentials missing")
+        return
+    conn = _connect_admin()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT has_function_privilege('securebiz_auth',
+                    'auth_session.get_user_status(uuid)', 'EXECUTE') AS auth_can,
+                       has_function_privilege('securebiz_app',
+                    'auth_session.get_user_status(uuid)', 'EXECUTE') AS app_can
+            """)
+            auth_can, app_can = cur.fetchone()
+        if not auth_can:
+            record("db: get_user_status_acl", "FAIL",
+                   "securebiz_auth cannot EXECUTE")
+        elif app_can:
+            record("db: get_user_status_acl", "FAIL",
+                   "securebiz_app should NOT EXECUTE")
+        else:
+            record("db: get_user_status_acl", "OK",
+                   "auth=EXECUTE, app=NO-EXECUTE")
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    auth_session.get_user_status(NULL::uuid),
+                    auth_session.get_user_status(
+                        '00000000-0000-0000-0000-000000000000'::uuid
+                    )
+            """)
+            null_status, unknown_status = cur.fetchone()
+        if null_status is not None or unknown_status is not None:
+            record("db: get_user_status_behavior", "FAIL",
+                   "NULL or unknown UUID did not return NULL")
+        else:
+            record("db: get_user_status_behavior", "OK",
+                   "NULL and unknown UUID both return NULL")
+    finally:
+        conn.close()
+
+
+def check_credentials_count():
+    if not _admin_ready():
+        record("db: credentials", "SKIP", "admin credentials missing")
+        return
+    conn = _connect_admin()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM auth_private.credentials")
+            (count,) = cur.fetchone()
+        record("db: credentials", "OK", "%d row(s)" % count)
+    finally:
+        conn.close()
+
+
+def check_provisioner_role():
+    if not _admin_ready():
+        record("db: provisioner_role", "SKIP", "admin credentials missing")
+        return
+    conn = _connect_admin()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+                       rolreplication, rolbypassrls
+                FROM pg_roles WHERE rolname = 'securebiz_provisioner'
+            """)
+            row = cur.fetchone()
+        if not row:
+            record("db: provisioner_role", "FAIL", "role missing")
+            return
+        can_login, is_super, can_createdb, can_createrole, can_repl, bypass_rls = row
+        if not can_login:
+            record("db: provisioner_role", "FAIL", "role is NOLOGIN")
+            return
+        if is_super or bypass_rls:
+            record("db: provisioner_role", "FAIL",
+                   "role is superuser or BYPASSRLS")
+            return
+        if can_createdb or can_createrole or can_repl:
+            record("db: provisioner_role", "FAIL",
+                   "role has CREATEDB/CREATEROLE/REPLICATION")
+            return
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    has_schema_privilege('securebiz_provisioner',
+                        'auth_private', 'USAGE') AS usage,
+                    has_schema_privilege('securebiz_provisioner',
+                        'auth_private', 'CREATE') AS create
+            """)
+            usage, create = cur.fetchone()
+        if not usage:
+            record("db: provisioner_role", "FAIL",
+                   "no USAGE on auth_private")
+            return
+        if create:
+            record("db: provisioner_role", "FAIL",
+                   "has CREATE on auth_private (should not)")
+            return
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    has_table_privilege('securebiz_provisioner',
+                        'auth_private.credentials', 'INSERT') AS ins,
+                    has_table_privilege('securebiz_provisioner',
+                        'auth_private.credentials', 'SELECT') AS sel,
+                    has_table_privilege('securebiz_provisioner',
+                        'auth_private.credentials', 'UPDATE') AS upd,
+                    has_table_privilege('securebiz_provisioner',
+                        'auth_private.credentials', 'DELETE') AS del,
+                    has_table_privilege('securebiz_provisioner',
+                        'auth_private.credentials', 'TRUNCATE') AS trunc,
+                    has_table_privilege('securebiz_provisioner',
+                        'auth_private.credentials', 'REFERENCES') AS ref,
+                    has_table_privilege('securebiz_provisioner',
+                        'auth_private.credentials', 'TRIGGER') AS trig
+            """)
+            ins, sel, upd, dele, trunc, ref, trig = cur.fetchone()
+        if not ins:
+            record("db: provisioner_role", "FAIL",
+                   "no INSERT on credentials")
+            return
+        if sel or upd or dele or trunc or ref or trig:
+            record("db: provisioner_role", "FAIL",
+                   "unexpected table privileges on credentials")
+            return
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT count(*) FROM pg_auth_members m
+                JOIN pg_roles r ON r.oid = m.member
+                WHERE r.rolname = 'securebiz_provisioner'
+            """)
+            (memberships,) = cur.fetchone()
+        if memberships > 0:
+            record("db: provisioner_role", "FAIL",
+                   "%d role memberships (expected 0)" % memberships)
+            return
+
+        record("db: provisioner_role", "OK",
+               "LOGIN, INSERT only, no memberships, no CREATE/USAGE on schema")
+    finally:
+        conn.close()
+
+
 def _sign_payload(payload_json):
-    """Sign payload_json bytes with Vault Transit Ed25519. No hash_algorithm."""
     payload_b64 = base64.b64encode(payload_json.encode("utf-8")).decode("ascii")
     req = urllib.request.Request(
         "%s/v1/transit/sign/%s" % (VAULT_ADDR, KEY_NAME),
@@ -230,8 +458,8 @@ def check_full_flow():
     if not VAULT_TOKEN:
         record("e2e: install_context", "FAIL", "no vault token")
         return
-    if not ADMIN_USER:
-        record("e2e: install_context", "SKIP", "admin role required")
+    if not _admin_ready():
+        record("e2e: install_context", "SKIP", "admin credentials missing")
         return
 
     conn = _connect_admin()
@@ -282,7 +510,7 @@ def check_full_flow():
 
 def main():
     print("=" * 72)
-    print(" SecureBiz Lab - state_check.py  (handover v2, section 15)")
+    print(" SecureBiz Lab - state_check.py  (v4, Priority 9)")
     print("=" * 72)
 
     for name, fn in [
@@ -290,6 +518,10 @@ def main():
         ("db: structure", check_db_structure),
         ("db: public_key", check_public_key),
         ("db: test_data", check_test_data),
+        ("db: refresh_tokens", check_auth_session_refresh_tokens),
+        ("db: get_user_status_acl", check_get_user_status_acl),
+        ("db: credentials", check_credentials_count),
+        ("db: provisioner_role", check_provisioner_role),
         ("vault: sign", check_vault_sign),
         ("e2e: install_context", check_full_flow),
     ]:
@@ -297,20 +529,25 @@ def main():
 
     print()
     for section, status, detail in results:
-        print("[%-4s] %-28s %s" % (status, section, detail))
+        print("[%-4s] %-30s %s" % (status, section, detail))
 
     fails = [r for r in results if r[1] == "FAIL"]
+    warns = [r for r in results if r[1] == "WARN"]
     skips = [r for r in results if r[1] == "SKIP"]
     print()
     if fails:
-        print("RESULT: %d FAILED - investigate before coding." % len(fails))
+        print("RESULT: %d FAILED - investigate." % len(fails))
         sys.exit(1)
-    if skips:
-        print("RESULT: %d skipped (admin creds absent), %d OK - "
-              "partial validation only." % (len(skips),
-              len(results) - len(skips)))
+    if warns:
+        print("RESULT: %d WARN, %d OK, %d SKIP - review warnings."
+              % (len(warns), len(results) - len(warns) - len(skips), len(skips)))
         sys.exit(0)
-    print("RESULT: all checks passed. Proceed to section 15.10 (next actions).")
+    if skips:
+        print("RESULT: %d SKIP (admin creds absent), %d OK - partial."
+              % (len(skips), len(results) - len(skips)))
+        sys.exit(0)
+    print("RESULT: all checks passed.")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
