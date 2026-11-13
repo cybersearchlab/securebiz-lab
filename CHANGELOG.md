@@ -10,6 +10,80 @@ evidence is preserved in the `docs/06-tests/` directory.
 
 ---
 
+## [v0.6.0] — 2026-11-13 — Priority 10: Hygiene and deprecations
+
+### Added
+
+- `.gitattributes`: normalize text files to LF, preserve CRLF for
+  PowerShell scripts (`*.ps1`, `*.psm1`), mark binary files.
+- `scripts/init_vault.py`: new admin-only script that enables the Vault
+  Transit engine and creates the Ed25519 signing key (idempotent).
+  Must be run once before starting the API, and again after any Vault
+  restart in -dev mode (inmem storage loses all keys).
+
+### Changed
+
+- `app/main.py`: replace deprecated `@app.on_event("startup")` with a
+  `lifespan` context manager. `init_vault_key()` is no longer called at
+  startup. The lifespan now logs a warning pointing to
+  `scripts/init_vault.py`.
+- `app/api/dependencies.py`: replace deprecated
+  `HTTP_422_UNPROCESSABLE_ENTITY` with `HTTP_422_UNPROCESSABLE_CONTENT`
+  in `_parse_uuid()`. Starlette 1.10.0 provides the new constant.
+- `app/core/vault.py`: docstring of `init_vault_key()` updated to
+  'ADMIN ONLY. Must be invoked from scripts/init_vault.py, NOT from the
+  API runtime.'
+- `.gitignore`: add `.env.backup-*` (protect .env backups) and `*.bak-*`
+  (protect any timestamped backup file). Existing rules preserved,
+  no duplicate.
+
+### Removed
+
+- `app/api/dependencies.py`: remove the historical `get_tenant_context()`
+  function (debug-header dependency). No route, test, or script
+  references it since Priority 6 migrated all IAM routes to
+  `get_authenticated_tenant_context()`. It has been dead code since then.
+
+### Verified
+
+- 132 tests persisted (108 host + 24 container):
+  - `test_isolation.py`: 4/4 (F2, container)
+  - `test_isolation_users.py`: 4/4 (container)
+  - `test_isolation_roles.py`: 4/4 (container)
+  - `test_dependencies_lifecycle.py`: 10/10 (host)
+  - `test_refresh_db.py`: 12/12 (container, real PostgreSQL)
+  - `test_jwt.py`: 38/38 (host)
+  - `test_refresh.py`: 31/31 (host)
+  - `test_auth_routes.py`: 18/18 (host)
+  - `test_provision_user.py`: 11/11 (host)
+- 108 host tests pass with `-W error::DeprecationWarning`
+  (no more `on_event is deprecated` or `HTTP_422_UNPROCESSABLE_ENTITY
+  is deprecated` warnings).
+- `scripts/init_vault.py` executed in the container with `-w /app +
+  PYTHONPATH=/app`: exit code 0.
+- `docker exec python -c 'from app.main import app'` -> OK (10 routes).
+- `with psycopg.connect(...) as conn:` closes the connection on context
+  exit (verified with psycopg 3.3.8).
+
+### Changed behaviour
+
+- The API no longer provisions Vault at startup. `init_vault_key()` must
+  be called manually via `scripts/init_vault.py` before using the API.
+  This is a fail-closed separation: the runtime role cannot mount a
+  secrets engine or create a key. If Vault was not provisioned, requests
+  that need signing return 503 instead of silently recreating a key.
+
+### Known limitations
+
+- `scripts/init_vault.py` performs administrative operations. It should
+  be invoked with an admin-scoped token. Do NOT call it from the API
+  runtime.
+- `with psycopg.connect(...) as conn:` closes the connection on context
+  exit (verified with psycopg 3.3.8). `scripts/provision_user.py`
+  already relies on this behaviour; no `finally: conn.close()` is
+  needed.
+
+---
 ## [v0.5.1] — 2026-11-13 — Priority 9: Test coverage and state_check extension
 
 ### Added
