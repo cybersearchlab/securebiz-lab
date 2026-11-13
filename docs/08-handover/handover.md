@@ -1,7 +1,7 @@
 MASTER HANDOVER PROMPT — SECUREBIZ LAB
-Version 14.1 — Priority 5, Priority 6, and Priority 8 Complete;
-Image Rebuilt; Vault Re-Provisioned; Ready for Priority 9 (Extended Tests)
-Snapshot date: 12 November 2026 (evening session)
+Version 14.2 — Priority 5, Priority 6, Priority 8, and Priority 9 Complete;
+Image Rebuilt; Vault Re-Provisioned; 102 Tests; Ready for Priority 10 (Hygiene)
+Snapshot date: 13 November 2026
 Project directory: C:\Users\nguey\Documents\SecureBiz-Lab
 Environment: Windows 11, PowerShell (5.1), Docker Desktop with WSL2,
   Python 3.12 in the API container, PostgreSQL 16, FastAPI, psycopg,
@@ -502,13 +502,20 @@ database/migrations/002_auth_session.sql	Auth session schema, refresh tokens, ge
 scripts/state_check.py	State checks
 tests/test_isolation.py	Tenant-isolation tests (JWT + ASGITransport as of Priority 6)
 
-4.1 Git history — VERIFIED 12 November 2026 (supersedes v13 §4.1)
+4.1 Git history — VERIFIED 13 November 2026 (supersedes v14.1 §4.1)
 git is available (2.56.0.windows.4). The repository root is C:/Users/ngu ey/Documents/SecureBiz-Lab, branch main, not a shallow clone.
 
-Verified commit list (git log --oneline, 12 November 2026 evening):
+Verified commit list (git log --oneline, 13 November 2026):
 
 text
-83071f1 (HEAD -> main, origin/main) feat(priority8): provisioner role, Vault policy, Argon2id provisioning scripts, and v14 handover
+26eade2 (HEAD -> main, origin/main) docs(v0.5.1): close Priority 9 (tests, state_check v4, documentation)
+dc022c0                              test(priority9): extend state_check.py to v4 (10 checks)
+986f913                              test(priority9): add provisioning CLI tests (11 tests, mocked Vault/DB)
+dd4be83                              test(priority9): add auth route tests (18 tests, mocked services)
+5a47261                              test(priority9): add refresh service unit tests (31 tests, mocked DB)
+1cf9ac2                              test(priority9): add JWT unit tests (38 tests, no DB/Vault)
+83071f1                              feat(priority8): provisioner role, Vault policy, Argon2id provisioning scripts, and v14 handover
+c00e0c3                              docs(v0.5.0): update documentation for Priority 8 (provisioning)
 a65f27b                              feat(priority6): migrate IAM routes and isolation test to JWT auth
 ff7d60a                              docs(v0.4.0): update documentation for Priority 5
 158aeb4                              feat(priority5): JWT auth + refresh tokens + auth routes + rebuild
@@ -2271,7 +2278,7 @@ Element    Status
 app/core/vault.py get_jwt_secret()    Verified (32 bytes, version 3 after re-provisioning)
 Vault KV secret secret/data/securebiz/jwt    Present (version 3, never displayed)
 app/core/jwt.py create_access_token    Verified (HS256, kid, claims)
-app/core/jwt.py verify_access_token    Verified (18/18 tests)
+app/core/jwt.py verify_access_token    Verified (38/38 tests, Priority 9)
 app/services/refresh.py    Rewritten (advisory locks, RefreshTokenError, RefreshTokenDatabaseError, revoke_family, revoke_family_by_raw_token)
 app/schemas/auth.py    Created (LoginRequest with EmailStr, TokenResponse)
 app/api/routes/auth.py    Created (/auth/login, /auth/refresh, /auth/logout)
@@ -2280,20 +2287,32 @@ app/api/routes/users.py    Migrated to get_authenticated_tenant_context (Priorit
 app/api/routes/organizations.py    Migrated to get_authenticated_tenant_context (Priority 6)
 app/api/routes/roles.py    Migrated to get_authenticated_tenant_context (Priority 6)
 tests/test_isolation.py    Rewritten with httpx.AsyncClient + ASGITransport, 4 tests, asserted logout cleanup (Priority 6)
+tests/test_jwt.py    New in Priority 9, 38 tests (create/verify, 18 positive + 20 negative), no DB/Vault
+tests/test_refresh.py    New in Priority 9, 31 tests (mocked DB, real Argon2id), all scenarios
+tests/test_auth_routes.py    New in Priority 9, 18 tests (mocked services, /auth/login, /auth/refresh, /auth/logout)
+tests/test_provision_user.py    New in Priority 9, 11 tests (mocked Vault + DB, real Argon2id, error paths)
+tests/conftest.py    New in Priority 9, minimal env vars for pytest
+scripts/state_check.py    v4 (Priority 9), 16 checks (was 6), dynamic Vault key read
 app/main.py    auth_router registered (8 paths verified)
 requirements.txt    PyJWT==2.10.1, argon2-cffi==25.1.0, email-validator==2.2.0 added
 Packages in running container    PyJWT 2.10.1, argon2-cffi 25.1.0, email-validator 2.2.0, httpx 0.28.1
 Packages persisted in image    YES (rebuilt 12 November 2026, verified with docker run --rm)
 auth_private.credentials    1 row (test credential, Argon2id)
-auth_session.refresh_tokens    11 rows, 0 active (all revoked)
+auth_session.refresh_tokens    17 rows, 0 active (all revoked)
 auth_session active_tokens    0
 public.users    1 row (status = active)
+public.memberships    1 row (status = active)
 Priority 5 tests    P1-P8 (8/8) + P11 (1/1) all passed
 Priority 6 tests    F2 4/4 passed
+Priority 9 tests    JWT 38/38, Refresh 31/31, Auth routes 18/18, Provisioning 11/11 (host); Isolation 4/4 (container)
+Priority 9 state_check.py    v4, 16 checks, all OK (exit code 0)
 Priority 8 tests    End-to-end provisioning test passed (1/1)
 Git commit of Priority 5    Done (158aeb4)
 Git commit of Priority 5 documentation    Done (ff7d60a)
 Git commit of Priority 6    Done (a65f27b)
+Git commit of Priority 8    Done (83071f1)
+Git commit of Priority 8 documentation    Done (c00e0c3)
+Git commit of Priority 9    Done (1cf9ac2, 5a47261, dd4be83, 986f913, dc022c0, 26eade2)
 Git commit of Priority 8    Done (83071f1)
 Git push of all commits    Done (origin/main on 83071f1)
 Migration 003 applied    securebiz_provisioner created (NOLOGIN, then activated)
@@ -2306,16 +2325,16 @@ Provisioning test (provision_user.py)    Passed end-to-end (login 200)
 21.2 What is NOT implemented
 
 Element    Status
-state_check.py extension for auth_session.refresh_tokens and get_user_status    Pending — Priority 9
-Runtime tenant-isolation tests under JWT for /users and /roles    Pending — Priority 9 (only /organizations/me is covered by F2)
-Full transaction lifecycle tests (cleanup failure, commit failure, rollback failure, connection close on each path)    Pending — Priority 9
+Runtime tenant-isolation tests under JWT for /users and /roles    Pending — Priority 9 follow-up (F2 covers /organizations/me only)
+Full transaction lifecycle tests (cleanup failure, commit failure, rollback failure, connection close on each path)    Pending — Priority 9 follow-up
 Removal of get_tenant_context (dead code)    Open — retained for backward compatibility per Priority 6 step 8
 .gitattributes CRLF policy    Pending — Priority 10
-Vault inmem persistence    Open — secrets lost on restart, re-provisioning manual
-Audit table for provisioning    Pending — v2 of Priority 8
---reset option in provision_user.py    Pending — v2 of Priority 8
 
 
+Add .env.backup-* and *.bak-* to .gitignore    Pending — Priority 10
+Vault persistent backend (file, Consul) or automated re-provisioning    Pending — v15
+Store provisioner-script token in a local file (not in memory)    Pending — v15
+Automate Vault/PG public key synchronization after Vault restart    Pending — v15
 21.3 Provisioning searches already performed
 Repository-wide searches for INSERT INTO users, INSERT INTO memberships, create_user, create_membership, provision_user, seed_user, seed_data, create_organization returned nothing. Migration inspection confirmed no user/organization/membership provisioning routine. Git history confirmed no committed INSERT statement.
 
@@ -2537,6 +2556,29 @@ Priority 6 tests/test_isolation.py: 4/4 passed. See §23.2.
 - state_check.py extended coverage (auth_session.refresh_tokens, get_user_status, credentials)
 - .gitattributes CRLF/LF policy
 
+### 23.7 Priority 9 tests — added 2026-11-13 (Priority 9 close)
+
+The five test files added during Priority 9:
+
+| File | Tests | Environment | Result | Commit |
+|---|---|---|---|---|
+| `tests/test_jwt.py` | 38 | Host (no DB/Vault, mocked secret) | 38/38 | `1cf9ac2` |
+| `tests/test_refresh.py` | 31 | Host (mocked `get_auth_connection`) | 31/31 | `5a47261` |
+| `tests/test_auth_routes.py` | 18 | Host (mocked services, real Argon2id) | 18/18 | `dd4be83` |
+| `tests/test_provision_user.py` | 11 | Host (mocked Vault + DB, real Argon2id) | 11/11 | `986f913` |
+| `tests/test_isolation.py` | 4 | Container (`db:5432`, `vault:8200`) | 4/4 | `a65f27b` (Priority 6) |
+
+**Total: 102 tests** (98 host + 4 container).
+
+Known limitations of the mocked tests:
+
+- Mocked DB (`test_refresh.py`, `test_auth_routes.py`) does not exercise
+  PostgreSQL advisory locks, RLS policies, constraints, or concurrency.
+- `test_provision_user.py` mocks `requests.get` (Vault) and
+  `psycopg.connect`. Real Argon2id hashing is exercised.
+- `tests/conftest.py` sets `VAULT_TOKEN` before any `app.*` import,
+  because `app/core/vault.py` checks it at module load (line 45).
+
 24. CONSOLIDATED SECURITY ASSESSMENT
 24.1 Positive findings
 
@@ -2634,6 +2676,22 @@ v14 additions (new):
 - No DELETE and no direct UPDATE performed against auth_session.refresh_tokens.
 - Four .bak-v13 backups removed from the working tree (3 routes + 1 test).
 - Working tree clean (Section 4.4).
+
+Priority 9 (tests) findings (added 2026-11-13):
+- 102 tests persisted (98 host + 4 container): 38 JWT, 31 refresh,
+  18 auth routes, 11 provisioning, 4 isolation.
+- `scripts/state_check.py` v4: 10 checks (was 6), dynamic Vault key read,
+  strict base64 (validate=True, 32 bytes), WARN on divergence (no auto-resync).
+- Vault Ed25519 public key resynchronized after container restart
+  (`ccc071be...` → `757147f3...`). Manual UPDATE on
+  `auth_security.public_keys`. No automation yet.
+- `EXPECTED_PUBKEY_HEX` removed from `state_check.py` (obsolete after the
+  2026-11-12 Vault restart). Dynamic Vault read instead.
+- `tests/conftest.py` sets `VAULT_TOKEN` before any `app.*` import
+  (`app/core/vault.py` validates at module load).
+- `tests/test_isolation.py` needs the container: `vault:8200` and `db:5432`
+  are Docker-internal DNS. On the Windows host, 3/4 tests fail
+  (`VAULT_ADDR` unreachable).
 
 24.2 Findings requiring further review
 
@@ -2733,6 +2791,17 @@ v14.1 additions (new in Priority 8):
   cryptographically-safe value, synchronized between PostgreSQL and .env.
 - Working tree is clean, 5 commits, origin/main aligned on 83071f1.
 
+Priority 9 (tests) pending items (added 2026-11-13):
+- Vault/PostgreSQL public key sync is manual. After any Vault restart
+  (inmem storage), the Ed25519 key changes and
+  `auth_security.public_keys` must be updated via securebiz_user.
+- Runtime tenant-isolation tests under JWT for `/users` and `/roles`
+  are still pending (F2 covers `/organizations/me` only).
+- Full transaction lifecycle tests (cleanup failure, commit failure,
+  rollback failure, connection close on each path) are still pending.
+- `EXPECTED_PUBKEY_HEX` removed from `state_check.py`; dynamic Vault
+  read used instead, WARN on divergence (no auto-resync).
+
 25. CURRENT INVESTIGATION STATUS
 Investigation	Actual status
 
@@ -2818,16 +2887,14 @@ Git push of Priority 8    Completed — origin/main on 83071f1
 Working tree clean    Completed — git status --short empty
 
 Pending:
-state_check.py extension (auth_session, get_user_status, credentials)    PENDING — Priority 9
-Runtime tenant-isolation tests under JWT for /users and /roles    PENDING — Priority 9
-Full transaction lifecycle tests    PENDING — Priority 9
-Provisioning script unit tests in tests/    PENDING — Priority 9
+state_check.py v4 (10 checks)    COMPLETED — Priority 9 (commit dc022c0)
+Runtime tenant-isolation tests under JWT for /users and /roles    PENDING — Priority 9 follow-up
+Full transaction lifecycle tests    PENDING — Priority 9 follow-up
+Provisioning script unit tests (tests/test_provision_user.py)    COMPLETED — Priority 9 (commit 986f913)
 Removal of dead get_tenant_context    OPEN — Priority 10
 .gitattributes CRLF policy    PENDING — Priority 10
 app/main.py lifespan migration (on_event deprecated)    PENDING — Priority 10
 Vault inmem persistence    OPEN — v15 automation or backend change
---reset option in provision_user.py    PENDING — v2 of Priority 8
-Audit table for provisioning    PENDING — v2 of Priority 8
 
 26. NEXT PRIORITIES
 
@@ -2845,7 +2912,7 @@ What was implemented:
 Argon2id parameters (confirmed against app/api/routes/auth.py):
   time_cost=2, memory_cost=19456, parallelism=1, hash_len=32, salt_len=16.
 
-Priority 9 — Tests and state_check extension (next)
+Priority 9 — Tests and state_check extension (CLOSED on 2026-11-13)
 - Unit tests for refresh.py: P1-P8 and P11 done manually, but not in tests/.
 - Integration tests for /auth/*: manual only.
 - Tenant isolation tests under JWT for /users and /roles (F2 covers
@@ -2858,6 +2925,18 @@ Priority 9 — Tests and state_check extension (next)
   - auth_session.get_user_status (EXECUTE ACL, behavior)
   - auth_private.credentials (count, no hash leaked)
   - securebiz_provisioner role (attributes, privileges)
+
+Priority 9 status (2026-11-13): CLOSED
+
+- 102 tests persisted in `tests/` (98 host + 4 container).
+- `scripts/state_check.py` v4: 10 checks (was 6), 16 records.
+- 6 commits: `1cf9ac2` (JWT), `5a47261` (refresh), `dd4be83` (auth routes),
+  `986f913` (provisioning), `dc022c0` (state_check v4), `26eade2` (docs).
+- Vault Ed25519 public key resynchronized manually (`ccc071be...` →
+  `757147f3...`) after container restart.
+- `EXPECTED_PUBKEY_HEX` removed; dynamic Vault read + WARN on divergence.
+- `/users` and `/roles` isolation under JWT: still pending (follow-up).
+- Full transaction lifecycle tests: still pending (follow-up).
 
 Priority 10 — Hygiene and deprecations
 - Add .gitattributes to formalize the LF/CRLF policy.
@@ -2989,7 +3068,90 @@ v14.1 pitfalls (new in Priority 8):
 - Do not commit .env or .env.backup-* files. They contain secrets. Add
   them to .gitignore if not already present.
 
-28. EXACT CONTINUATION POINT — VERSION 14
+v14.2 pitfalls (new in Priority 9):
+- `tests/conftest.py` must set `VAULT_TOKEN` (and `VAULT_ADDR`) before
+  any `app.*` import. `app/core/vault.py` raises `RuntimeError` at
+  module load (line 45) if `VAULT_TOKEN` is missing. Mocking
+  `get_jwt_secret` is not enough — the import fails before the mock
+  can be applied.
+- `app/core/config.py` instantiates `Settings()` at module load, so
+  any test that imports `app.*` must provide `DB_HOST`, `DB_PORT`,
+  `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `AUTH_DB_USER`,
+  `AUTH_DB_PASSWORD`. `conftest.py` does this.
+- `httpx.ASGITransport` does not inject cookies set via
+  `client.cookies.set()`. Use an explicit
+  `headers={"Cookie": f"refresh_token={token}"}` for replay tests.
+- `tests/test_isolation.py` requires the API container (`vault:8200`
+  and `db:5432` are Docker-internal DNS). On the Windows host,
+  3/4 tests fail (`VAULT_ADDR` unreachable). Execute in the container.
+- Vault dev mode (`inmem`) regenerates the Ed25519 key on container
+  restart. `auth_security.public_keys` must be updated manually
+  (securebiz_user, UPDATE on `public_keys`). This is not automated.
+- `scripts/state_check.py` must remain READ-ONLY, except
+  `check_full_flow` which calls `install_context()` and then
+  `ROLLBACK`. Do not add auto-resync of the public key inside the
+  script: it would hide a real Vault restart event.
+- `state_check.py` uses `_admin_ready()` to centralize degraded mode.
+  When `DB_ADMIN_USER` or `DB_ADMIN_PASSWORD` is missing, all DB
+  checks return SKIP (never FAIL).
+- Base64 decode of the Vault public key must use `validate=True` and
+  check `len(bytes) == 32`. Strict validation catches corruption.
+- `psycopg3`'s `with psycopg.connect(...) as conn:` does NOT call
+  `conn.close()` on context exit; it commits or rolls back. Connection
+  closure happens on process exit. Do not assert `conn.close()` in
+  tests; assert `conn.__exit__()` instead.
+- `provision_user.py` relies on `with psycopg.connect(...)` for
+  transaction management, but does not close the connection
+  explicitly. A future refactor (Priority 10) should add
+  `finally: conn.close()`.
+
+28. EXACT CONTINUATION POINT — VERSION 14.2
+Version 14.2 continuation (2026-11-13):
+
+Priority 5, Priority 6, Priority 8, and Priority 9 are CLOSED.
+
+Verified state (2026-11-13):
+
+- Tests: 102 persisted (98 host + 4 container). Files: `test_jwt.py`
+  (38), `test_refresh.py` (31), `test_auth_routes.py` (18),
+  `test_provision_user.py` (11), `test_isolation.py` (4, container).
+- `scripts/state_check.py` v4: 10 checks, 16 records, 0 FAIL, 0 WARN,
+  exit code 0.
+- `auth_security.public_keys`: resynced to Vault current key
+  (`757147f3...`) after 2026-11-12 Vault restart.
+- `auth_session.refresh_tokens`: 17 rows, 0 active.
+- `auth_private.credentials`: 1 row (test credential, Argon2id).
+- `.gitignore`: `.env`, `__pycache__/`, `*.py[cod]`, `.venv/`, `venv/`,
+  `.pytest_cache/`, `.coverage`, `*.bak`. Missing: `.env.backup-*`,
+  `*.bak-*` (Priority 10).
+
+Git state:
+
+- HEAD: `26eade2` (docs v0.5.1, close Priority 9).
+- `origin/main` aligned.
+- Working tree clean (before this documentation update).
+- 12 commits total.
+
+Immediate next step: Priority 10 (hygiene and deprecations).
+
+- Add `.gitattributes` for LF/CRLF policy.
+- Add `.env.backup-*` and `*.bak-*` to `.gitignore`.
+- Migrate `@app.on_event("startup")` to `lifespan=` in `app/main.py`.
+- Evaluate removal of `get_tenant_context` (dead code).
+- Migrate `init_vault_key()` to a separate administrative path.
+- Add `finally: conn.close()` to `scripts/provision_user.py`.
+- (v15) Vault persistent backend (file, Consul) or automated
+  re-provisioning.
+- (v15) Store `provisioner-script` token in a local file (not in memory).
+- (v15) Automate Vault/PG public key synchronization after Vault restart.
+
+Do not restart the project.
+Do not repeat completed inspections.
+Do not weaken security to pass tests.
+Do not assume Vault secrets persist. They do not (inmem).
+Do not assume the public key is in sync after a Vault restart.
+Preserve all existing data, Docker volumes, database security
+boundaries and unrelated containers.
 
 Priority 5 and Priority 6 are CLOSED. All functional tests passed on 12 November 2026:
 - Priority 5: P1-P8 (8/8) and P11 (1/1).
@@ -3036,7 +3198,7 @@ Preserve all existing data, Docker volumes, database security boundaries and unr
 
 29. FINAL HANDOVER RULE
 
-Continue SecureBiz Lab from this exact Version 14.1 state.
+Continue SecureBiz Lab from this exact Version 14.2 state.
 
 The project has completed Priority 5 (Authentication and Session
 Management), Priority 6 (IAM route migration to JWT, isolation test
@@ -3060,7 +3222,12 @@ Do not weaken security to pass tests.
 Do not assume the rebuild is pending. It is done.
 Do not assume Vault secrets persist. They do not (inmem).
 
-Immediate next step: start Priority 9 unit tests for refresh.py.
+Priority 9 (2026-11-13) completed the test suite (102 tests) and
+extended `scripts/state_check.py` to v4 (10 checks). All Priority 9
+commits are pushed to `origin/main`.
 
+Priority 5, 6, 8, and 9 are closed.
+
+The next phase is Priority 10 (hygiene and deprecations).
 Preserve all existing data, Docker volumes, database security boundaries
 and unrelated containers.
