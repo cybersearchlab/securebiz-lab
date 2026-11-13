@@ -1,6 +1,6 @@
 MASTER HANDOVER PROMPT — SECUREBIZ LAB
-Version 14.2 — Priority 5, Priority 6, Priority 8, and Priority 9 Complete;
-Image Rebuilt; Vault Re-Provisioned; 102 Tests; Ready for Priority 10 (Hygiene)
+Version 14.3 — Priority 5, Priority 6, Priority 8, Priority 9, and Priority 10 Complete;
+Vault Provisioning Separated; 132 Tests; Ready for Phase 7 (DevSecOps)
 Snapshot date: 13 November 2026
 Project directory: C:\Users\nguey\Documents\SecureBiz-Lab
 Environment: Windows 11, PowerShell (5.1), Docker Desktop with WSL2,
@@ -502,13 +502,22 @@ database/migrations/002_auth_session.sql	Auth session schema, refresh tokens, ge
 scripts/state_check.py	State checks
 tests/test_isolation.py	Tenant-isolation tests (JWT + ASGITransport as of Priority 6)
 
-4.1 Git history — VERIFIED 13 November 2026 (supersedes v14.1 §4.1)
+4.1 Git history — VERIFIED 13 November 2026 (supersedes v14.2 §4.1)
 git is available (2.56.0.windows.4). The repository root is C:/Users/ngu ey/Documents/SecureBiz-Lab, branch main, not a shallow clone.
 
 Verified commit list (git log --oneline, 13 November 2026):
 
 text
-26eade2 (HEAD -> main, origin/main) docs(v0.5.1): close Priority 9 (tests, state_check v4, documentation)
+0c702d7 (HEAD -> main, origin/main) refactor(priority10): move Vault provisioning to scripts/init_vault.py
+02b1e8f                              refactor(priority10): remove dead get_tenant_context dependency
+7b9bd9e                              docs(priority10): document psycopg.connect() context manager behaviour
+6886a27                              chore(priority10): migrate to lifespan and fix deprecated status code
+198f1bc                              chore(priority10): add .gitattributes and extend .gitignore
+de63f03                              test(priority9-followup): add real-PostgreSQL integration tests for refresh
+07b5112                              test(priority9-followup): add transaction lifecycle tests for get_authenticated_tenant_context
+4e79a01                              test(priority9-followup): add /users and /roles isolation tests
+a30e575                              docs(v0.5.2): update handover to v14.2 (Priority 9 close)
+26eade2                              docs(v0.5.1): close Priority 9 (tests, state_check v4, documentation)
 dc022c0                              test(priority9): extend state_check.py to v4 (10 checks)
 986f913                              test(priority9): add provisioning CLI tests (11 tests, mocked Vault/DB)
 dd4be83                              test(priority9): add auth route tests (18 tests, mocked services)
@@ -2275,6 +2284,7 @@ Verified by TCP test: get_auth_connection() successfully connects as securebiz_a
 21.1 What is implemented and verified
 
 Element    Status
+All Priority 10 items (gitattributes, gitignore, lifespan, HTTP 422, dead code get_tenant_context, init_vault separation) — CLOSED on 2026-11-13.
 app/core/vault.py get_jwt_secret()    Verified (32 bytes, version 3 after re-provisioning)
 Vault KV secret secret/data/securebiz/jwt    Present (version 3, never displayed)
 app/core/jwt.py create_access_token    Verified (HS256, kid, claims)
@@ -2305,33 +2315,31 @@ public.memberships    1 row (status = active)
 Priority 5 tests    P1-P8 (8/8) + P11 (1/1) all passed
 Priority 6 tests    F2 4/4 passed
 Priority 9 tests    JWT 38/38, Refresh 31/31, Auth routes 18/18, Provisioning 11/11 (host); Isolation 4/4 (container)
+Priority 10 tests    .gitattributes added, .gitignore extended, lifespan migrated, HTTP 422 constant updated
+Priority 10 tests    .gitattributes and .gitignore are config files; no test change. 108 host tests pass with -W error::DeprecationWarning.
 Priority 9 state_check.py    v4, 16 checks, all OK (exit code 0)
 Priority 8 tests    End-to-end provisioning test passed (1/1)
 Git commit of Priority 5    Done (158aeb4)
 Git commit of Priority 5 documentation    Done (ff7d60a)
 Git commit of Priority 6    Done (a65f27b)
-Git commit of Priority 8    Done (83071f1)
 Git commit of Priority 8 documentation    Done (c00e0c3)
 Git commit of Priority 9    Done (1cf9ac2, 5a47261, dd4be83, 986f913, dc022c0, 26eade2)
-Git commit of Priority 8    Done (83071f1)
-Git push of all commits    Done (origin/main on 83071f1)
+Git commit of Priority 10    Done (198f1bc, 6886a27, 7b9bd9e, 02b1e8f, 0c702d7, 6bb3db7, 755ea2e, 3a8f2a5)
+Git push of all commits    Done (origin/main on 3a8f2a5)
 Migration 003 applied    securebiz_provisioner created (NOLOGIN, then activated)
 Vault policy provisioner-read    Applied (read on secret/data/securebiz/provisioner)
 Vault token provisioner-script    Created (8h TTL, read-only)
 scripts/set_provisioner_password.py    Created, env-aware, fail-safe rollback
 scripts/provision_user.py    Created, Argon2id params confirmed against auth.py
+scripts/init_vault.py    Created (Priority 10, admin-only Vault provisioning)
 Provisioning test (provision_user.py)    Passed end-to-end (login 200)
 
 21.2 What is NOT implemented
 
 Element    Status
-Runtime tenant-isolation tests under JWT for /users and /roles    Pending — Priority 9 follow-up (F2 covers /organizations/me only)
-Full transaction lifecycle tests (cleanup failure, commit failure, rollback failure, connection close on each path)    Pending — Priority 9 follow-up
-Removal of get_tenant_context (dead code)    Open — retained for backward compatibility per Priority 6 step 8
-.gitattributes CRLF policy    Pending — Priority 10
+All Priority 10 items (gitattributes, gitignore, lifespan, HTTP 422, dead code get_tenant_context, init_vault separation) — CLOSED on 2026-11-13.
 
 
-Add .env.backup-* and *.bak-* to .gitignore    Pending — Priority 10
 Vault persistent backend (file, Consul) or automated re-provisioning    Pending — v15
 Store provisioner-script token in a local file (not in memory)    Pending — v15
 Automate Vault/PG public key synchronization after Vault restart    Pending — v15
@@ -2556,9 +2564,9 @@ Priority 6 tests/test_isolation.py: 4/4 passed. See §23.2.
 - state_check.py extended coverage (auth_session.refresh_tokens, get_user_status, credentials)
 - .gitattributes CRLF/LF policy
 
-### 23.7 Priority 9 tests — added 2026-11-13 (Priority 9 close)
+### 23.7 Priority 9 and Priority 10 tests — added 2026-11-13
 
-The five test files added during Priority 9:
+The nine test files persisted after Priority 9 and Priority 10:
 
 | File | Tests | Environment | Result | Commit |
 |---|---|---|---|---|
@@ -2566,18 +2574,31 @@ The five test files added during Priority 9:
 | `tests/test_refresh.py` | 31 | Host (mocked `get_auth_connection`) | 31/31 | `5a47261` |
 | `tests/test_auth_routes.py` | 18 | Host (mocked services, real Argon2id) | 18/18 | `dd4be83` |
 | `tests/test_provision_user.py` | 11 | Host (mocked Vault + DB, real Argon2id) | 11/11 | `986f913` |
+| `tests/test_dependencies_lifecycle.py` | 10 | Host (mocked connection, ordering checks) | 10/10 | `07b5112` |
 | `tests/test_isolation.py` | 4 | Container (`db:5432`, `vault:8200`) | 4/4 | `a65f27b` (Priority 6) |
+| `tests/test_isolation_users.py` | 4 | Container (JWT + real DB) | 4/4 | `4e79a01` |
+| `tests/test_isolation_roles.py` | 4 | Container (JWT + real DB) | 4/4 | `4e79a01` |
+| `tests/test_refresh_db.py` | 12 | Container (real PostgreSQL, constraints) | 12/12 | `de63f03` |
 
-**Total: 102 tests** (98 host + 4 container).
+**Total: 132 tests** (108 host + 24 container).
 
 Known limitations of the mocked tests:
 
 - Mocked DB (`test_refresh.py`, `test_auth_routes.py`) does not exercise
   PostgreSQL advisory locks, RLS policies, constraints, or concurrency.
+  The real behaviour is covered by `test_refresh_db.py` (container).
 - `test_provision_user.py` mocks `requests.get` (Vault) and
   `psycopg.connect`. Real Argon2id hashing is exercised.
 - `tests/conftest.py` sets `VAULT_TOKEN` before any `app.*` import,
   because `app/core/vault.py` checks it at module load (line 45).
+- `test_dependencies_lifecycle.py` uses `attach_mock()` on a parent mock
+  to verify the chronological order of transaction lifecycle calls
+  (install -> cleanup -> commit -> close on success; install -> rollback
+  -> close on error).
+- `test_refresh_db.py` creates its own families and revokes them in a
+  `finally` block. It does not touch the 32 existing rows / 2 active
+  residual families. It uses `securebiz_auth`, never the superuser.
+  SQL constraint violations are isolated with SAVEPOINT.
 
 24. CONSOLIDATED SECURITY ASSESSMENT
 24.1 Positive findings
@@ -2693,6 +2714,36 @@ Priority 9 (tests) findings (added 2026-11-13):
   are Docker-internal DNS. On the Windows host, 3/4 tests fail
   (`VAULT_ADDR` unreachable).
 
+Priority 10 (hygiene and deprecations) findings (added 2026-11-13):
+
+- The API no longer provisions Vault at startup. `init_vault_key()` was
+  removed from the lifespan and moved to `scripts/init_vault.py`
+  (admin-only). The runtime role cannot mount a secrets engine or
+  create a key. Fail-closed: if Vault was not provisioned, requests
+  that need signing return 503 instead of silently recreating a key.
+- `app/main.py` migrated from deprecated `@app.on_event("startup")` to
+  a `lifespan` context manager (`@asynccontextmanager`). This removes
+  the `DeprecationWarning: on_event is deprecated` emitted by FastAPI
+  /Starlette.
+- `app/api/dependencies.py`: `HTTP_422_UNPROCESSABLE_ENTITY` replaced
+  by `HTTP_422_UNPROCESSABLE_CONTENT` in `_parse_uuid()`. This removes
+  the `StarletteDeprecationWarning: HTTP_422_UNPROCESSABLE_ENTITY is
+  deprecated` warning. Starlette 1.10.0 provides the new constant.
+- `get_tenant_context()` (debug-header dependency) removed. It was dead
+  code since Priority 6 migrated all IAM routes to
+  `get_authenticated_tenant_context()`. No route, test, or script
+  referenced it.
+- `.gitattributes` added: LF/CRLF normalization, PowerShell scripts
+  keep CRLF, binary files marked.
+- `.gitignore` extended: `.env.backup-*` and `*.bak-*` added. Existing
+  rules preserved, no duplicate.
+- `with psycopg.connect(...) as conn:` closes the connection on context
+  exit (verified in the container with psycopg 3.3.8: INSIDE_WITH
+  conn.closed=False, AFTER_WITH conn.closed=True, AFTER_WITH cursor()
+  raises OperationalError). `scripts/provision_user.py` already relies
+  on this behaviour; no `finally: conn.close()` is needed.
+- 108 host tests pass with `-W error::DeprecationWarning` (no more
+  deprecation warnings). The 24 container tests also pass.
 24.2 Findings requiring further review
 
 v12 findings (unchanged):
@@ -2802,6 +2853,27 @@ Priority 9 (tests) pending items (added 2026-11-13):
 - `EXPECTED_PUBKEY_HEX` removed from `state_check.py`; dynamic Vault
   read used instead, WARN on divergence (no auto-resync).
 
+Priority 10 (hygiene and deprecations) pending items (added 2026-11-13):
+
+- All Priority 10 items (gitattributes, gitignore, lifespan migration,
+  HTTP 422 constant, dead code get_tenant_context removal, init_vault
+  separation) are CLOSED.
+- Residual items for v15:
+  - Vault persistent backend (file, Consul) or automated
+    re-provisioning. Currently inmem; any Vault restart loses the
+    Ed25519 key, JWT secret, and provisioner secret.
+  - Store the provisioner-script token in a local file (not in memory).
+    Currently recreated at each session.
+  - Automate Vault/PG public key synchronization after Vault restart.
+    Currently a manual UPDATE on `auth_security.public_keys` via
+    `securebiz_user`.
+- Residual items for Phase 7 (DevSecOps):
+  - CI pipeline (GitHub Actions).
+  - Automated tests on every change.
+  - Security checks in the pipeline (SAST, DAST, dependency scanning).
+  - Operations documentation.
+  - Reproducible demonstration scenarios.
+  - Final security report of the lab.
 25. CURRENT INVESTIGATION STATUS
 Investigation	Actual status
 
@@ -2887,13 +2959,12 @@ Git push of Priority 8    Completed — origin/main on 83071f1
 Working tree clean    Completed — git status --short empty
 
 Pending:
-state_check.py v4 (10 checks)    COMPLETED — Priority 9 (commit dc022c0)
-Runtime tenant-isolation tests under JWT for /users and /roles    PENDING — Priority 9 follow-up
-Full transaction lifecycle tests    PENDING — Priority 9 follow-up
+state_check.py v4 (10 checks)    COMPLETED (dc022c0)
+Runtime tenant-isolation tests under JWT for /users and /roles    COMPLETED (4e79a01, 4+4 tests)
+Full transaction lifecycle tests    COMPLETED (07b5112, 10 tests)
 Provisioning script unit tests (tests/test_provision_user.py)    COMPLETED — Priority 9 (commit 986f913)
-Removal of dead get_tenant_context    OPEN — Priority 10
-.gitattributes CRLF policy    PENDING — Priority 10
-app/main.py lifespan migration (on_event deprecated)    PENDING — Priority 10
+Removal of dead get_tenant_context    COMPLETED (02b1e8f)
+app/main.py lifespan migration (on_event deprecated)    COMPLETED (6886a27)
 Vault inmem persistence    OPEN — v15 automation or backend change
 
 26. NEXT PRIORITIES
@@ -2928,6 +2999,39 @@ Priority 9 — Tests and state_check extension (CLOSED on 2026-11-13)
 
 Priority 9 status (2026-11-13): CLOSED
 
+Priority 10 status (2026-11-13): CLOSED
+
+- .gitattributes added (LF/CRLF normalization, PowerShell, binary).
+- .gitignore extended (.env.backup-*, *.bak-*).
+- lifespan= replaces @app.on_event("startup") in app/main.py.
+- HTTP_422_UNPROCESSABLE_CONTENT replaces the deprecated constant.
+- get_tenant_context() (dead code) removed from dependencies.py.
+- scripts/init_vault.py: Vault provisioning moved to an admin script.
+- 5 commits: `198f1bc` (gitattributes+gitignore), `6886a27` (lifespan+HTTP422),
+  `7b9bd9e` (psycopg documentation), `02b1e8f` (dead code removal),
+  `0c702d7` (vault provisioning separation). Plus 3 docs commits:
+  `6bb3db7` (CHANGELOG), `755ea2e` (README), `3a8f2a5` (ROADMAP).
+- 108 host tests pass with -W error::DeprecationWarning.
+- 24 container tests pass.
+- Total: 132 tests.
+
+Priority 9 follow-up status (2026-11-13): CLOSED
+
+- 3 test files added: `test_isolation_users.py`, `test_isolation_roles.py`,
+  `test_refresh_db.py` (12 tests, real PostgreSQL), `test_dependencies_lifecycle.py`
+  (10 tests, transaction ordering).
+- 4 commits: `4e79a01`, `07b5112`, `de63f03` (+ docs in `a30e575` and later).
+
+Phase 7 (DevSecOps and Demonstration) — NEXT
+
+- CI pipeline (GitHub Actions).
+- Automated tests on every change.
+- Security checks in the pipeline (SAST, DAST, dependency scanning).
+- Operations documentation.
+- Reproducible demonstration scenarios.
+- Final security report of the lab.
+
+
 - 102 tests persisted in `tests/` (98 host + 4 container).
 - `scripts/state_check.py` v4: 10 checks (was 6), 16 records.
 - 6 commits: `1cf9ac2` (JWT), `5a47261` (refresh), `dd4be83` (auth routes),
@@ -2938,7 +3042,7 @@ Priority 9 status (2026-11-13): CLOSED
 - `/users` and `/roles` isolation under JWT: still pending (follow-up).
 - Full transaction lifecycle tests: still pending (follow-up).
 
-Priority 10 — Hygiene and deprecations
+Priority 10 — Hygiene and deprecations (CLOSED on 2026-11-13)
 - Add .gitattributes to formalize the LF/CRLF policy.
 - Add .env.backup-* and *.bak-* to .gitignore.
 - Migrate @app.on_event("startup") to lifespan= in app/main.py.
@@ -2955,7 +3059,7 @@ Priority 9 — Tests and state_check extension
   - auth_session.get_user_status (EXECUTE ACL, behavior)
   - auth_private.credentials (count, no hash leaked)
 
-Priority 10 — Hygiene and deprecations
+Priority 10 — Hygiene and deprecations (CLOSED on 2026-11-13)
 - Add .gitattributes to formalize the LF/CRLF policy.
 - Migrate @app.on_event("startup") to lifespan= in app/main.py.
 - Evaluate removal of get_tenant_context (dead code) after confirming no test or internal caller uses it.
@@ -3105,45 +3209,87 @@ v14.2 pitfalls (new in Priority 9):
   explicitly. A future refactor (Priority 10) should add
   `finally: conn.close()`.
 
-28. EXACT CONTINUATION POINT — VERSION 14.2
-Version 14.2 continuation (2026-11-13):
+Priority 10 pitfalls (new in v14.3):
 
-Priority 5, Priority 6, Priority 8, and Priority 9 are CLOSED.
+- `with psycopg.connect(...) as conn:` closes the connection on context
+  exit (verified with psycopg 3.3.8). Do not add a `finally: conn.close()`
+  to `scripts/provision_user.py`; it would be redundant. Use
+  `conn.__exit__()` in tests if you need to assert the closure.
+- PowerShell 5.1 `@'...'@` here-strings and `Replace()` can fail silently
+  on multi-line blocks that span CRLF/LF boundaries. Always normalize
+  to LF before replacing, and normalize back to CRLF after writing.
+- A relative path passed to `[System.IO.File]::ReadAllText()` is
+  resolved from the .NET process working directory, not from the
+  PowerShell `Get-Location`. Always use `(Resolve-Path ...).Path` or
+  `Join-Path (Resolve-Path ...).Path`.
+- When running a script from the project root inside the API container,
+  use `docker exec -w /app securebiz-api env PYTHONPATH=/app python
+  scripts/<name>.py`. Without `PYTHONPATH=/app`, the `app` package is
+  not importable and you get `ModuleNotFoundError: No module named 'app'`.
+- The `-w /app` and `PYTHONPATH=/app` requirement applies to all
+  scripts under `scripts/` that import from `app.*` (state_check.py,
+  provision_user.py, init_vault.py).
+- `with psycopg.connect(...)` does NOT take a `conn.close()` call
+  explicitly, but the context manager's `__exit__` closes the
+  connection. Do not confuse "no explicit close" with "connection
+  not closed".
+- `init_vault_key()` is now `ADMIN ONLY`. Do not call it from the
+  API runtime. If you need to provision Vault, run
+  `scripts/init_vault.py` (admin scope).
+- The API is now fail-closed: if Vault is not provisioned, requests
+  that need signing return 503 with a clear error, instead of
+  silently recreating a key.
+- Deleting `get_tenant_context()` was safe: no route, test, or script
+  referenced it. Before removing any "dead" code, always grep
+  `app/`, `tests/`, and `scripts/` for the function name.
+28. EXACT CONTINUATION POINT — VERSION 14.3
+Version 14.3 continuation (2026-11-13):
+
+Priority 5, Priority 6, Priority 8, Priority 9, and Priority 10 are CLOSED.
 
 Verified state (2026-11-13):
 
-- Tests: 102 persisted (98 host + 4 container). Files: `test_jwt.py`
+- Tests: 132 persisted (108 host + 24 container). Files: `test_jwt.py`
   (38), `test_refresh.py` (31), `test_auth_routes.py` (18),
-  `test_provision_user.py` (11), `test_isolation.py` (4, container).
+  `test_provision_user.py` (11), `test_dependencies_lifecycle.py` (10),
+  `test_isolation.py` (4), `test_isolation_users.py` (4),
+  `test_isolation_roles.py` (4), `test_refresh_db.py` (12).
 - `scripts/state_check.py` v4: 10 checks, 16 records, 0 FAIL, 0 WARN,
   exit code 0.
+- `scripts/init_vault.py`: new admin-only Vault provisioning script.
+  Must be run once before starting the API, and again after any Vault
+  restart in -dev mode (inmem storage loses all keys). Requires
+  `-w /app` + `PYTHONPATH=/app` when invoked via `docker exec`.
 - `auth_security.public_keys`: resynced to Vault current key
   (`757147f3...`) after 2026-11-12 Vault restart.
-- `auth_session.refresh_tokens`: 17 rows, 0 active.
+- `auth_session.refresh_tokens`: 42 rows, 2 active (residual from
+  earlier tests, left untouched by `test_refresh_db.py`).
 - `auth_private.credentials`: 1 row (test credential, Argon2id).
-- `.gitignore`: `.env`, `__pycache__/`, `*.py[cod]`, `.venv/`, `venv/`,
-  `.pytest_cache/`, `.coverage`, `*.bak`. Missing: `.env.backup-*`,
-  `*.bak-*` (Priority 10).
+- `.gitignore`: `.env`, `.env.backup-*`, `__pycache__/`, `*.py[cod]`,
+  `.venv/`, `venv/`, `.pytest_cache/`, `.coverage`, `*.bak`, `*.bak-*`.
+- `.gitattributes`: LF/CRLF normalization, PowerShell CRLF, binary files.
 
 Git state:
 
-- HEAD: `26eade2` (docs v0.5.1, close Priority 9).
+- HEAD: `3a8f2a5` (docs v0.6.0, update ROADMAP).
 - `origin/main` aligned.
 - Working tree clean (before this documentation update).
-- 12 commits total.
+- 21 commits total.
 
-Immediate next step: Priority 10 (hygiene and deprecations).
+Immediate next step: Phase 7 (DevSecOps and Demonstration).
 
-- Add `.gitattributes` for LF/CRLF policy.
-- Add `.env.backup-*` and `*.bak-*` to `.gitignore`.
-- Migrate `@app.on_event("startup")` to `lifespan=` in `app/main.py`.
-- Evaluate removal of `get_tenant_context` (dead code).
-- Migrate `init_vault_key()` to a separate administrative path.
-- Add `finally: conn.close()` to `scripts/provision_user.py`.
-- (v15) Vault persistent backend (file, Consul) or automated
-  re-provisioning.
-- (v15) Store `provisioner-script` token in a local file (not in memory).
-- (v15) Automate Vault/PG public key synchronization after Vault restart.
+- CI pipeline (GitHub Actions).
+- Automated tests on every change.
+- Security checks in the pipeline (SAST, DAST, dependency scanning).
+- Operations documentation.
+- Reproducible demonstration scenarios.
+- Final security report of the lab.
+
+Residual items for v15:
+
+- Vault persistent backend (file, Consul) or automated re-provisioning.
+- Store `provisioner-script` token in a local file (not in memory).
+- Automate Vault/PG public key synchronization after Vault restart.
 
 Do not restart the project.
 Do not repeat completed inspections.
@@ -3198,7 +3344,7 @@ Preserve all existing data, Docker volumes, database security boundaries and unr
 
 29. FINAL HANDOVER RULE
 
-Continue SecureBiz Lab from this exact Version 14.2 state.
+Continue SecureBiz Lab from this exact Version 14.3 state.
 
 The project has completed Priority 5 (Authentication and Session
 Management), Priority 6 (IAM route migration to JWT, isolation test
@@ -3229,5 +3375,13 @@ commits are pushed to `origin/main`.
 Priority 5, 6, 8, and 9 are closed.
 
 The next phase is Priority 10 (hygiene and deprecations).
+Priority 10 (2026-11-13) closed the hygiene and deprecation items
+(.gitattributes, .gitignore, lifespan, HTTP 422, dead code removal,
+init_vault separation). The test suite now has 132 tests
+(108 host + 24 container).
+
+Priority 5, 6, 8, 9, and 10 are closed.
+
+The next phase is Phase 7 (DevSecOps and Demonstration).
 Preserve all existing data, Docker volumes, database security boundaries
 and unrelated containers.
