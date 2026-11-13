@@ -15,7 +15,7 @@ from app.core.jwt import (
 
 
 SECRET = "unit-test-secret-that-is-never-used-outside-tests"
-PREVIOUS_SECRET = "previous-unit-test-secret"
+PREVIOUS_SECRET = "previous-unit-test-secret-key-padded-32b"
 KID = "test-key-v1"
 PREVIOUS_KID = "test-key-v0"
 

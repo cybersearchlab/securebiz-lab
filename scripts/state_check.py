@@ -30,6 +30,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 import uuid
 
 import psycopg
@@ -62,6 +63,44 @@ def _admin_ready():
     return bool(ADMIN_USER and ADMIN_PASSWORD)
 
 
+
+def _safe_urlopen(req, timeout=5):
+    """
+    Open a request only against the internal Docker Vault endpoint.
+
+    SECURITY:
+    - HTTP only (internal development Docker network).
+    - Exact authority: vault:8200.
+    - No userinfo, alternate host, or alternate port.
+    - No query string or fragment.
+    """
+    url = req.full_url if hasattr(req, "full_url") else str(req)
+    parsed = urlparse(url)
+
+    if parsed.scheme != "http":
+        raise ValueError("Blocked Vault URL scheme")
+
+    if parsed.netloc != "vault:8200":
+        raise ValueError("Blocked Vault URL authority")
+
+    if parsed.hostname != "vault":
+        raise ValueError("Blocked Vault URL host")
+
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Invalid Vault URL port") from exc
+
+    if port != 8200:
+        raise ValueError("Blocked Vault URL port")
+
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Vault URL userinfo is forbidden")
+
+    if parsed.query or parsed.fragment:
+        raise ValueError("Vault URL query and fragment are forbidden")
+
+    return urllib.request.urlopen(req, timeout=timeout)  # nosec B310 - Exact internal Vault authority validated above.
 def check_env():
     record("env: VAULT_ADDR", "OK", VAULT_ADDR)
     record("env: VAULT_TOKEN", "OK" if VAULT_TOKEN else "FAIL",
@@ -156,7 +195,7 @@ def check_public_key():
             "%s/v1/transit/keys/%s" % (VAULT_ADDR, KEY_NAME),
             headers={"X-Vault-Token": VAULT_TOKEN},
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _safe_urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         keys = data["data"]["keys"]
         latest_ver = str(max(int(k) for k in keys))
@@ -418,7 +457,7 @@ def _sign_payload(payload_json):
         headers={"X-Vault-Token": VAULT_TOKEN,
                  "Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, timeout=10) as resp:
+    with _safe_urlopen(req, timeout=10) as resp:
         data = json.loads(resp.read().decode("utf-8"))
     sig = data["data"]["signature"]
     if not sig.startswith("vault:v"):
