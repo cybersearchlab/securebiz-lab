@@ -42,7 +42,7 @@ implementation, reproducible testing, and documentation updates.
 -   [ ] Registration / invitation / account activation flow.
 -   [x] Provisioning endpoint or script for Argon2id password hashes.
 -   [x] Migration of IAM routes (`/users`, `/organizations/me`, `/roles`) to `get_authenticated_tenant_context()`.
--   [ ] Removal or deprecation of `X-Debug-*` headers from the production code path.
+-   [x] Removal or deprecation of `X-Debug-*` headers from the production code path. (P10: get_tenant_context removed, no route imports X-Debug-*.)
 -   [x] Role assignment and permission checks enforced at the route level (RBAC middleware).
 -   [ ] Negative tests and suspended-account handling in the automated test suite.
 
@@ -83,7 +83,7 @@ implementation, reproducible testing, and documentation updates.
 -   [ ] Centralized secrets management (Vault as the only secret store, no `.env` secrets).
 -   [ ] Logging and audit of sensitive events (login success/failure, token rotation, revocation, replay detection).
 -   [ ] Container and image hardening (`trivy`, minimal base images).
--   [ ] FastAPI `@app.on_event("startup")` migration to `lifespan=`.
+-   [x] FastAPI `@app.on_event("startup")` migration to `lifespan=`. (P10: pp/main.py now uses @asynccontextmanager async def lifespan(app).)
 
 ## Phase 7 — DevSecOps and Demonstration
 
