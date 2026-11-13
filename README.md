@@ -1,5 +1,7 @@
 # SecureBiz Lab
 
+[![SecureBiz Lab CI](https://github.com/cybersearchlab/securebiz-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/cybersearchlab/securebiz-lab/actions/workflows/ci.yml)
+
 **Security Assessment & DevSecOps for Business Applications**
 
 > Document status: v0.6.0 — November 13, 2026
