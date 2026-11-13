@@ -2,8 +2,8 @@
 
 **Security Assessment & DevSecOps for Business Applications**
 
-> Document status: v0.4.0 — November 12, 2026
-> Project status: Technical prototype — cryptographic architecture validated, authentication layer implemented
+> Document status: v0.5.1 — November 12, 2026
+> Project status: Technical prototype — cryptographic architecture validated, authentication layer implemented, 102 automated tests (98 host + 4 container)
 
 ## 1. Overview
 

@@ -43,7 +43,7 @@ implementation, reproducible testing, and documentation updates.
 -   [x] Provisioning endpoint or script for Argon2id password hashes.
 -   [x] Migration of IAM routes (`/users`, `/organizations/me`, `/roles`) to `get_authenticated_tenant_context()`.
 -   [ ] Removal or deprecation of `X-Debug-*` headers from the production code path.
--   [ ] Role assignment and permission checks enforced at the route level (RBAC middleware).
+-   [x] Role assignment and permission checks enforced at the route level (RBAC middleware).
 -   [ ] Negative tests and suspended-account handling in the automated test suite.
 
 ## Phase 4 — Multi-Tenant Isolation
@@ -53,8 +53,8 @@ implementation, reproducible testing, and documentation updates.
 -   [x] Write testable policies for each operation (SELECT/INSERT/UPDATE/DELETE).
 -   [x] Test with a non-privileged role (`securebiz_app`).
 -   [x] Document the threat model and its limitations (`docs/05-securite/security.md`).
--   [ ] Automated isolation tests between two organizations (Pytest).
--   [ ] Test cross-organization access attempts (partially done manually).
+-   [x] Automated isolation tests between two organizations (Pytest).
+-   [x] Test cross-organization access attempts (F2 covers /organizations/me; /users and /roles pending).
 -   [x] Tenant isolation tests under JWT authentication (after IAM route migration).
 
 ## Phase 5 — Cryptography and Security
@@ -76,8 +76,8 @@ implementation, reproducible testing, and documentation updates.
 
 ## Phase 6 — Security and Quality
 
--   [ ] Unit, API, and integration tests (extend `tests/` with JWT, refresh, isolation).
--   [ ] Extend `scripts/state_check.py` to cover `auth_session.refresh_tokens`, `get_user_status`, `auth_private.credentials`.
+-   [x] Unit, API, and integration tests (extend `tests/` with JWT, refresh, isolation).
+-   [x] Extend `scripts/state_check.py` to cover `auth_session.refresh_tokens`, `get_user_status`, `auth_private.credentials`.
 -   [ ] Dependency audit (`pip-audit`).
 -   [ ] Static analysis (`bandit`) and formatting (`black`, `ruff`).
 -   [ ] Centralized secrets management (Vault as the only secret store, no `.env` secrets).
