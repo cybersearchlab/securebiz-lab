@@ -1,4 +1,4 @@
-﻿.env
+.env
 __pycache__/
 *.py[cod]
 .venv/
@@ -6,3 +6,5 @@ venv/
 .pytest_cache/
 .coverage
 *.bak
+.env.backup-*
+*.bak-*
