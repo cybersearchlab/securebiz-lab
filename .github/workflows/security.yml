@@ -1,0 +1,66 @@
+# ============================================================================
+# SecureBiz Lab - Security Checks (GitHub Actions)
+# ============================================================================
+#
+# SAST: Bandit on app/ and scripts/.
+# Dependency scan: pip-audit on requirements.txt.
+#
+# CI tests are handled by the separate ci.yml workflow.
+# ============================================================================
+
+name: SecureBiz Lab Security
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sast:
+    name: SAST (Bandit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Bandit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "bandit[toml]==1.9.4"
+
+      - name: Run Bandit
+        run: |
+          bandit -r app scripts -ll -iii
+
+  dependency-scan:
+    name: Dependency scan (pip-audit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-audit
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "pip-audit==2.10.1"
+
+      - name: Audit requirements.txt
+        run: |
+          pip-audit -r requirements.txt
