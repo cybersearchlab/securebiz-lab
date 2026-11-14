@@ -1,0 +1,19 @@
+# Gitleaks configuration for SecureBiz Lab
+# https://github.com/gitleaks/gitleaks
+
+title = "SecureBiz Lab Gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Global allowlist for false positives"
+paths = [
+    # Local Python environment (not committed)
+    '''.venv/''',
+    # Local secrets file (not committed, in .gitignore)
+    '''.env''',
+    # Documentation with test UUIDs and examples
+    '''docs/''',
+    '''CHANGELOG.md''',
+]
