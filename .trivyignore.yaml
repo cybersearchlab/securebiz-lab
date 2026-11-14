@@ -1,0 +1,10 @@
+misconfigurations:
+  - id: DS-0013
+    paths:
+      - "postgres/Dockerfile"
+    statement: "Le changement de repertoire est necessaire pour compiler pgsodium."
+
+  - id: DS-0002
+    paths:
+      - "postgres/Dockerfile"
+    statement: "L'entrypoint officiel PostgreSQL effectue sa preparation avec les privileges root puis lance le serveur sous postgres UID 999. Verification runtime effectuee le 2026-11-14."

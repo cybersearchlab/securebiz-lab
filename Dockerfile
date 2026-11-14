@@ -23,12 +23,26 @@ RUN python -m pip install --no-cache-dir \
     "urllib3==2.8.0" \
     && python -m pip check
 
-# Suppression de pip (non utilise au runtime) pour eliminer les CVE
-# provenant de son dossier _vendor (setuptools, msgpack, etc.).
+# Suppression de pip (non utilise au runtime).
 RUN python -m pip uninstall -y pip
 
 COPY ./app ./app
 
+# Creation d'un utilisateur non-root dedie (DS-0002).
+RUN groupadd --system --gid 1000 appgroup \
+    && useradd --system --uid 1000 --gid appgroup \
+       --no-create-home --shell /usr/sbin/nologin appuser
+
+# Code detenu par root, accessible en lecture uniquement.
+RUN chown -R root:appgroup /app \
+    && find /app -type d -exec chmod 0550 {} \; \
+    && find /app -type f -exec chmod 0440 {} \;
+
+USER appuser
+
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)" || exit 1
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

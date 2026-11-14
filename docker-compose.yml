@@ -1,4 +1,4 @@
-﻿services:
+services:
   vault:
     image: hashicorp/vault:1.20
     container_name: securebiz-vault
@@ -60,9 +60,9 @@
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
-      - ./app:/app/app
-      - ./scripts:/app/scripts
-      - ./tests:/app/tests
+      - ./app:/app/app:ro
+      - ./scripts:/app/scripts:ro
+      - ./tests:/app/tests:ro
     depends_on:
       db:
         condition: service_healthy
