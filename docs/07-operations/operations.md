@@ -401,6 +401,16 @@ Ce contrôle recherche les vulnérabilités connues associées aux dépendances 
 
 Il ne remplace ni une analyse de configuration, ni une revue de code, ni un test d'intrusion.
 
+### 9.4 OWASP ZAP (DAST) — non exécuté
+
+Le scan DAST avec OWASP ZAP n'a pas été exécuté sur cet environnement de développement. Deux contraintes ont empêché son exécution :
+
+1. L'image Docker officielle `ghcr.io/zaproxy/zaproxy:stable` fait environ 625 Mo et le téléchargement a échoué par manque de bande passante sur la connexion utilisée (le téléchargement a consommé plus de 1 Go sans aboutir).
+2. Aucun miroir alternatif fiable n'a été identifié pour cette image sur le réseau actuel.
+
+Le DAST reste une étape recommandée avant toute mise en production. Il devra être exécuté dans un environnement disposant d'une bande passante suffisante, ou avec une image ZAP pré-téléchargée et transférée manuellement.
+
+Cette limitation est documentée pour le rapport de sécurité final et ne remet pas en cause les autres contrôles (Bandit, pip-audit, Trivy, Gitleaks).
 ## 10. Workflows GitHub Actions
 
 Deux workflows sont présents dans `.github/workflows/`.
