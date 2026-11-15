@@ -58,6 +58,26 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ============================================================================
+# Security headers middleware (Phase 7, Task 3)
+# ============================================================================
+@app.middleware("http")
+async def security_headers_middleware(request, call_next):
+    """
+    Apply security headers to HTTP responses.
+    """
+    response = await call_next(request)
+
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+    response.headers["Cache-Control"] = (
+        "no-store, no-cache, must-revalidate, private"
+    )
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+    return response
+
 # Register API routers
 app.include_router(organizations_router)
 app.include_router(users_router)
