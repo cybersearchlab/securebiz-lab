@@ -8,3 +8,7 @@ venv/
 *.bak
 .env.backup-*
 *.bak-*
+
+# Internal handover documents (not for version control)
+docs/08-handover/
+
