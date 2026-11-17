@@ -12,3 +12,7 @@ venv/
 # Internal handover documents (not for version control)
 docs/08-handover/
 
+
+# Internal status documents (not for version control)
+docs/07-rapports/status.md
+
