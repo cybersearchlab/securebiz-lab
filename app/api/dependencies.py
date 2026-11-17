@@ -31,8 +31,8 @@ import uuid
 from typing import Generator
 
 from fastapi import Header, HTTPException, status
-import psycopg
-from psycopg import Connection
+import psycopg  # type: ignore[import-not-found]
+from psycopg import Connection  # type: ignore[import-not-found]
 
 from app.core.database import get_raw_connection
 from app.services.context_signing import sign_context
@@ -196,11 +196,11 @@ def get_authenticated_tenant_context(
             user_id, org_id
         )
     except ValueError:
-        # Invalid input: _parse_uuid should already have rejected it.
-        logger.error("Authenticated context signing failed: invalid input")
+        # Invalid tenant context input.
+        logger.warning("Authenticated context signing failed: invalid input")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal error.",
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Invalid tenant context.",
         ) from None
     except RuntimeError:
         # Vault unavailable or Transit signing failure.
