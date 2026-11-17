@@ -175,6 +175,10 @@ Evidence captures:
 - Owner login: `docs/07-rapports/captures/S1-login-success.png`
 - Member login: `docs/07-rapports/captures/S1-login-success-member.png`
 
+![S1-login-success](captures/S1-login-success.png)
+
+![S1-login-success-member](captures/S1-login-success-member.png)
+
 These results demonstrate successful authentication and token issuance for both account roles. The presence of the refresh cookie was observed; its `HttpOnly`, `Secure`, and `SameSite` attributes have not yet been independently verified. Refresh-token rotation and logout are documented as separate demonstrations and are not claimed as tested here.
 
 ### 3.2 Invalid credentials
@@ -186,6 +190,8 @@ Expected behavior:
 - Authentication is rejected.
 - The API returns HTTP 401.
 - The response uses the generic message `Invalid credentials.`
+
+![S1-login-invalid](captures/S1-login-invalid.png)
 
 The application also performs a dummy Argon2 password verification when an email address is unknown. This is an implementation measure intended to reduce account-enumeration timing differences.
 
@@ -211,6 +217,8 @@ Expected behavior:
 - The application attempts to establish the authenticated tenant context.
 - The organization response is restricted by the active tenant context and PostgreSQL RLS.
 
+![S1-protected-endpoint](captures/S1-protected-endpoint.png)
+
 ### 3.4 Refresh the access token
 
 The application exposes:
@@ -234,6 +242,8 @@ Expected behavior:
 
 The cookie jar is updated to contain the new refresh token.
 
+![S1-refresh-rotation](captures/S1-refresh-rotation.png)
+
 ### 3.5 Logout
 
 The application exposes:
@@ -253,6 +263,8 @@ Expected behavior:
 - The API returns the logout status.
 
 A successful logout must not be interpreted as proof that an already issued access JWT has been individually revoked. Access-token validation and refresh-token revocation are separate mechanisms.
+
+![S1-logout](captures/S1-logout.png)
 
 ## 4. Scenario 2 — Refresh Token Rotation and Replay Detection
 
@@ -304,6 +316,8 @@ Expected behavior:
 - The first refresh succeeds.
 - The replay attempt is rejected.
 - The affected token family is revoked by the refresh service.
+
+![S2-replay-detected](captures/S2-replay-detected.png)
 
 After the replay demonstration, the test account must authenticate again to obtain a new refresh-token family.
 
@@ -527,7 +541,7 @@ Both roles possess `roles:read` and `users:read`, so the API correctly authorize
 
 Status: **DEMONSTRATED**.
 
-> **[CAPTURE — S4-RBAC]** Captured: `captures/S4-rbac.png` — Captured 2026-11-17
+> **[CAPTURE — S4-RBAC]** Captured: ![S4-RBAC](captures/S4-rbac.png) — Captured 2026-11-17
 
 ### Demonstration D — Multi-tenant isolation (Scenario 5)
 
@@ -546,7 +560,7 @@ The 403 response demonstrates that the API tenant-context layer refuses access t
 
 Status: **DEMONSTRATED**.
 
-> **[CAPTURE — S3-MULTI-TENANT]** Captured: `captures/S3-multi-tenant.png` — Captured 2026-11-17
+> **[CAPTURE — S3-MULTI-TENANT]** Captured: ![S3-MULTI-TENANT](captures/S3-multi-tenant.png) — Captured 2026-11-17
 
 **API scope limitation:** the inspected FastAPI routes expose `GET /roles` and `GET /users`. The existence of SQL policies for role creation, modification, or deletion does not mean that corresponding role-management API endpoints are currently exposed.
 
@@ -645,9 +659,9 @@ The GitHub Actions interface shows 5 recent runs of the `SecureBiz Lab Security`
 - Run #4: Success (hardened Docker image).
 - Run #5: Success (security headers middleware).
 
-> **[CAPTURE — S6-CI-WORKFLOW]** Captured: `captures/S6-ci-workflow.png` — Captured 2026-11-17
+> **[CAPTURE — S6-CI-WORKFLOW]** Captured: ![S6-CI-WORKFLOW](captures/S6-ci-workflow.png) — Captured 2026-11-17
 
-> **[CAPTURE — S6-CI-HOST-TESTS]** Captured: `captures/S6-ci-host-tests.png`
+> **[CAPTURE — S6-CI-HOST-TESTS]** Captured: ![S6-CI-HOST-TESTS](captures/S6-ci-host-tests.png)
 > Shows both `Host tests (Python 3.12)` and `Host tests (Python 3.13)` jobs passing.
 
 Status: **DEMONSTRATED**.
@@ -676,8 +690,7 @@ supports_signing          true
 supports_encryption       false
 ```
 
-> **[CAPTURE — S5-VAULT-TRANSIT]** Captured: `captures/S5-vault-transit-flow.png` — Captured 2026-11-17
-> **[CAPTURE — S7-VAULT-SECRETS]** Captured: `captures/S7-vault-secret-mgmt.png` — Captured 2026-11-17
+> **[CAPTURE — S5-VAULT-TRANSIT]** Captured: ![S5-VAULT-TRANSIT](captures/S5-vault-transit-flow.png) — Captured 2026-11-17
 
 Status: **DEMONSTRATED**.
 
