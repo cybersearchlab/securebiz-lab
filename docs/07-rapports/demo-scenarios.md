@@ -420,6 +420,8 @@ The unauthorized-membership test confirms that a user without active membership 
 
 These results demonstrate tenant-membership enforcement at the API context-installation boundary. They do not, by themselves, constitute an exhaustive verification of every PostgreSQL Row-Level Security policy.
 
+> **[CAPTURE — S3-MULTI-TENANT]** Captured: ![S3-MULTI-TENANT](captures/S3-multi-tenant.png) — Captured 2026-11-17
+
 ## 6. Scenario 4 — PostgreSQL Row-Level Security and RBAC
 
 ### Objective
@@ -543,24 +545,6 @@ Status: **DEMONSTRATED**.
 
 > **[CAPTURE — S4-RBAC]** Captured: ![S4-RBAC](captures/S4-rbac.png) — Captured 2026-11-17
 
-### Demonstration D — Multi-tenant isolation (Scenario 5)
-
-A second organization `Demo Org B` (UUID `9ee261a1-16a7-41f1-ace7-7734975dbd76`) was created. The demonstration user `demo-member` is not a member of `Demo Org B`.
-
-The multi-tenant test results:
-
-| Test | Description | HTTP Status |
-|---|---|---|
-| A | Valid context (`Test Org`, `demo-owner`) | 200 OK |
-| B | Missing `X-Organization-Id` header | 400 Bad Request |
-| C | Invalid organization UUID | 422 Unprocessable Entity |
-| D | Unauthorized membership (`Demo Org B`, `demo-member`) | 403 Forbidden |
-
-The 403 response demonstrates that the API tenant-context layer refuses access to an organization the authenticated user does not belong to. This establishes access control at the API level. It does not, by itself, constitute proof that PostgreSQL RLS policies blocked a direct SQL read; that would require a separate database-level test.
-
-Status: **DEMONSTRATED**.
-
-> **[CAPTURE — S3-MULTI-TENANT]** Captured: ![S3-MULTI-TENANT](captures/S3-multi-tenant.png) — Captured 2026-11-17
 
 **API scope limitation:** the inspected FastAPI routes expose `GET /roles` and `GET /users`. The existence of SQL policies for role creation, modification, or deletion does not mean that corresponding role-management API endpoints are currently exposed.
 
@@ -632,6 +616,8 @@ They do not, by themselves, prove that a live demonstration of every negative ca
 
 In particular, a tampered-signature or forged-context attack must not be described as a successfully executed demonstration unless a dedicated test has actually been run and its result recorded.
 
+> **[CAPTURE — S5-VAULT-TRANSIT]** Captured: ![S5-VAULT-TRANSIT](captures/S5-vault-transit-flow.png) — Captured 2026-11-17
+
 ## 8. Scenario 6 — CI/CD Security Controls
 
 ### Objective
@@ -690,7 +676,7 @@ supports_signing          true
 supports_encryption       false
 ```
 
-> **[CAPTURE — S5-VAULT-TRANSIT]** Captured: ![S5-VAULT-TRANSIT](captures/S5-vault-transit-flow.png) — Captured 2026-11-17
+> **[CAPTURE — S7-VAULT-SECRETS]** Captured: ![S7-VAULT-SECRETS](captures/S7-vault-secret-mgmt.png) — Captured 2026-11-17
 
 Status: **DEMONSTRATED**.
 
@@ -803,8 +789,8 @@ Never include:
 | RBAC owner `/roles` and `/users` | API | HTTP 200 | DEMONSTRATED |
 | RBAC member `/roles` and `/users` | API | HTTP 200 | DEMONSTRATED |
 | Vault Transit signed context | API | Implicit in all API calls | DEMONSTRATED |
-| CI/CD workflows | GitHub Actions | - | NOT EXECUTED |
-| Vault secret management (live) | CLI | - | NOT EXECUTED |
+| CI/CD workflows | GitHub Actions | Run history observed | DEMONSTRATED |
+| Vault secret management (live) | CLI | `exportable: false` verified | DEMONSTRATED |
 
 ### 12.3 Capture status register
 
@@ -819,6 +805,10 @@ Never include:
 | S2-REPLAY | 4 | `captures/S2-replay-detected.png` | Captured 2026-11-16 |
 | S3-MULTI-TENANT | 5 | `captures/S3-multi-tenant.png` | Captured 2026-11-17 |
 | S4-RBAC | 6 | `captures/S4-rbac.png` | Captured 2026-11-17 |
+| S5-VAULT-TRANSIT | 7 | `captures/S5-vault-transit-flow.png` | Captured 2026-11-17 |
+| S6-CI-WORKFLOW | 8 | `captures/S6-ci-workflow.png` | Captured 2026-11-17 |
+| S6-CI-HOST-TESTS | 8 | `captures/S6-ci-host-tests.png` | Captured 2026-11-17 |
+| S7-VAULT-SECRETS | 9 | `captures/S7-vault-secret-mgmt.png` | Captured 2026-11-17 |
 
 ## 13. Cleanup
 
