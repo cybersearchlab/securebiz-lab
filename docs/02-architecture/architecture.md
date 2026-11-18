@@ -10,6 +10,11 @@ The prototype uses three Docker Compose services:
 | `db` | PostgreSQL 16 Bookworm + `pgsodium` | Store data, verify Ed25519 signatures, enforce Row-Level Security, store refresh token hashes. |
 | `vault` | HashiCorp Vault (Transit + KV-v2 engines) | Securely store the Ed25519 private key and sign contexts; store the JWT HS256 secret. The private key **never leaves Vault**. The JWT secret is read at startup and cached in memory. |
 
+### 1.1 Architecture Overview
+
+![SecureBiz-Lab architecture overview](captures/architecture-overview.png)
+
+*Figure 1 — Global architecture: three Docker services, Vault, PostgreSQL, and provisioning.*
 Inter-container communication uses the Docker Compose network. Known host ports:
 - `127.0.0.1:8000` → API (FastAPI)
 - `127.0.0.1:5433` → PostgreSQL
@@ -56,8 +61,8 @@ FastAPI application.
 
 #### Flow
 
-text
-Operator (Windows host or inside securebiz-api)
+```text
+Operator (must be inside securebiz-api container)
   |
   v
 scripts/provision_user.py
@@ -73,16 +78,18 @@ PostgreSQL (auth_private.credentials)
   v
 (optional) POST /auth/login -> 200 with access_token
 
+```
 #### Execution context
 
 The provisioning scripts use the Docker-internal DNS names (`vault:8200`,
 `db:5432`). They MUST be executed inside the `securebiz-api` container:
 
-text
+```text
 docker cp scripts/provision_user.py securebiz-api:/tmp/provision_user.py
 docker exec -it -e VAULT_TOKEN=<provisioner-script-token> \
     -w /app securebiz-api python /tmp/provision_user.py --user-id <uuid> [--generate]
 docker exec securebiz-api rm -f /tmp/provision_user.py
+```
 
 The Windows host cannot reach `vault:8200` or `db:5432` directly (Docker
 Desktop WSL2 networking). Host execution is not supported.
@@ -92,7 +99,7 @@ Desktop WSL2 networking). Host execution is not supported.
 The provisioning script uses the same parameters as
 `app/api/routes/auth.py` (single source of truth):
 
-python
+```python
 PasswordHasher(
     time_cost=2,
     memory_cost=19456,
@@ -101,6 +108,7 @@ PasswordHasher(
     salt_len=16,
 )
 
+```
 #### Security properties
 
 - The provisioner database password never leaves Vault.
@@ -121,6 +129,13 @@ Vault runs in dev mode with `inmem` storage. A restart of the Vault
 container loses all secrets (JWT, provisioner password, policy, token).
 Re-provisioning is currently manual.
 
+
+#### 2.4.1 Provisioning Sequence Diagram
+
+![Provisioning workflow](captures/provisioning.png)
+
+*Figure 8 — Provisioning workflow: Vault KV-v2 secret retrieval, Argon2id hashing, INSERT via securebiz_provisioner, and error classification.*
+
 ## 3. Code Organization
 
 -   `app/main.py`: FastAPI entry point, base routes, and startup events. Registers `organizations_router`, `users_router`, `roles_router`, `auth_router`.
@@ -130,9 +145,9 @@ Re-provisioning is currently manual.
 -   `app/core/jwt.py`: JWT HS256 issuance and verification with rotation support.
 -   `app/services/context_signing.py`: Builds and signs the canonical tenant context payload.
 -   `app/services/refresh.py`: Refresh token generation, hashing, rotation, reuse detection, family revocation. Advisory lock per `family_id` for concurrency safety.
--   `app/api/dependencies.py`: `get_tenant_context` (debug headers, legacy), `get_current_user` (JWT), `get_authenticated_tenant_context` (JWT + `X-Organization-Id`).
+-   `app/api/dependencies.py`: `get_current_user` (JWT), `get_authenticated_tenant_context` (JWT + `X-Organization-Id`).
 -   `app/api/routes/auth.py`: `/auth/login`, `/auth/refresh`, `/auth/logout`.
--   `app/api/routes/`: Business endpoints (`organizations`, `users`, `roles`), still using debug headers (Priority 6 migration pending).
+-   `app/api/routes/`: Business endpoints (`organizations`, `users`, `roles`), using `get_authenticated_tenant_context()` (JWT + `X-Organization-Id`).
 -   `app/schemas/auth.py`: `LoginRequest`, `TokenResponse`.
 -   `app/models/`, `app/schemas/`, `app/services/`: Prepared for future domain logic.
 -   `database/init/`: SQL initialization scripts (`pgsodium` extension).
@@ -170,6 +185,15 @@ PostgreSQL 16
 RLS (Row-Level Security)
 │
 └── 8. Automatically filters rows by organization_id
+
+```
+
+#### 4.1.1 Tenant Context Installation Sequence Diagram
+
+![Tenant context installation](captures/tenant-context.png)
+
+*Figure 5 — Tenant context installation: JWT validation, Vault Transit signature, pgsodium verification, RLS context binding, and transaction lifecycle.*
+
 
 4.2 Validation evidence
 The full flow has been validated by an end-to-end test executed with securebiz_app:
@@ -243,8 +267,25 @@ Concurrency: pg_advisory_xact_lock(hashtextextended(family_id::text, 0)) is acqu
 
 Exception separation: RefreshTokenError(ValueError) for business validation (unknown, expired, revoked, reused, invalid state) → 401. RefreshTokenDatabaseError(RuntimeError) for infrastructure failures → 503. The two do not inherit from each other, so except RefreshTokenError cannot swallow a DB failure.
 
+
+#### 5.2.1 Refresh Token Rotation Sequence Diagram
+
+![Refresh token rotation](captures/refresh-rotation.png)
+
+*Figure 3 — Refresh token rotation: family-level locking, reuse detection (revokes family), and rotation with replaced_by chaining.*
+
+
+
+#### 5.2.2 Logout Sequence Diagram
+
+![Logout](captures/logout.png)
+
+*Figure 4 — Logout: family revocation via raw token, cookie clearing, idempotent no-op for unknown tokens, fail-closed on DB failure.*
+
 5.3 Authentication flow (validated 9/9 tests)
-text
+
+
+```text
 Client
 │
 ├── POST /auth/login (email, password)
@@ -263,6 +304,14 @@ Client
 └── POST /auth/logout (cookie)
     ├── revoke_family_by_raw_token(raw) → revoke entire family
     └── Delete-Cookie: refresh_token
+```
+
+5.3.1 Login Sequence Diagram
+
+![Login sequence](captures/login-sequence.png)
+
+*Figure 2 — Login flow: credential verification (Argon2id, Python-side), JWT issuance (HS256, cached secret), and refresh token creation (opaque, SHA-256 hashed).*
+
 5.4 Authentication dependencies
 get_current_user(authorization: Header):
 
@@ -292,7 +341,7 @@ Everything else (including "Token replay detected" and "Invalid Ed25519 signatur
 
 psycopg.OperationalError → 503 (DB unavailable).
 
-Implemented and compiled, but not yet used by any route (Priority 6 migration pending).
+Implemented and used by `/organizations/me`, `/roles`, and `/users`.
 
 6. Organization Isolation (RLS)
 PostgreSQL Row-Level Security is enabled and forced on all tenant-scoped tables (organizations, users, memberships, roles, membership_roles, role_permissions).
@@ -319,6 +368,20 @@ securebiz_install_context() rejects expired tokens and invalid iss/aud.
 
 The JWT authentication and the signed tenant context are two separate mechanisms. A valid JWT proves the user's identity to the API. A signed tenant context proves the API's origin to PostgreSQL. Neither replaces the other.
 
+
+### 6.3 RLS and RBAC Execution Sequence
+
+![RLS and RBAC sequence](captures/rls-rbac-sequence.png)
+
+*Figure 6 — RLS and RBAC execution: context installation, permission check, and table-specific row filtering.*
+
+
+### 6.4 RLS and RBAC Policy Model
+
+![RLS and RBAC policy model](captures/rls-rbac-flowchart.png)
+
+*Figure 7 — RLS and RBAC policy model: relationships between the tenant context, RBAC tables, permission checks, and per-table RLS policies.*
+
 7. PostgreSQL Role Separation
 Role	Attributes	Purpose
 securebiz_user	SUPERUSER, LOGIN	Migration admin. Must not be used by the API.
@@ -338,7 +401,7 @@ pgsodium event trigger disabled: The trigger pgsodium_trg_mask_update is disable
 
 Public key rotation and JWT secret rotation: The design supports multiple keys via kid (Ed25519) and current/previous kids (JWT). No automated rotation procedure exists.
 
-IAM routes not yet migrated to JWT: /users, /organizations/me, /roles still use debug headers (X-Debug-User-Id, X-Debug-Org-Id). Migration is Priority 6.
+
 
 No provisioning endpoint: only one test credential exists (auth_private.credentials).
 
@@ -347,7 +410,6 @@ securebiz_get_context() is VOLATILE, not STABLE: prevents plan-level caching in 
 auth_session.refresh_tokens has RLS disabled: intentional (session store protected by strict ACLs, not a tenant table).
 
 9. Next Steps
-Migrate IAM routes (/users, /organizations/me, /roles) to get_authenticated_tenant_context() (JWT + X-Organization-Id).
 
 Update tests/test_isolation.py to use JWT + X-Organization-Id.
 
@@ -364,8 +426,6 @@ Migrate @app.on_event("startup") to lifespan=.
 Separate Vault provisioning from runtime.
 
 Implement a restricted Vault token policy for production.
-
-text
 
 ## Ce qui a changé vs v0.3.0
 
