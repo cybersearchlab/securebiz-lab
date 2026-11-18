@@ -53,7 +53,7 @@ distinguishes **verified controls** from **planned controls**.
 | Permission-based authorization (route-level middleware) | Planned (RLS enforces at DB level; no route middleware yet) |
 | Audit Log | Planned |
 | Automated Security Tests | **Partial** (Priority 6 isolation tests in `tests/`; Priority 5 and Priority 8 tests are manual only) |
-| CI/CD with Security Checks | Planned |
+| CI/CD with Security Checks | **Partial** (Bandit + pip-audit integrated in GitHub Actions; OWASP ZAP pending) |
 
 ## Verified Cryptographic Flow
 
@@ -199,9 +199,9 @@ The auth routes (`/auth/*`) map:
 
 Logging: no token, no secret, no password hash, no `user_id`, no `jti`. Only the class of failure.
 
-## Security Tests to Implement
+## Security Tests
 
-The following tests are planned (Pytest roadmap):
+The following tests are planned (Pytest roadmap). **Note:** Isolation tests (`tests/test_isolation.py`, 4/4) and JWT tests (18/18) have been implemented and passed.
 
 -   An unauthenticated user cannot access protected resources.
 -   A user from one organization cannot read data from another.
@@ -240,13 +240,8 @@ New in v0.4.0:
 
 -   **Vault in `-dev` mode**: acceptable for the lab, not for production.
 -   **Vault root token `dev-only-root-token`**: too powerful for production. A restricted policy (read on `transit/sign/securebiz-context`, `transit/keys/securebiz-context`, `secret/data/securebiz/jwt`) is required.
--   **`init_vault_key()` mixes Vault provisioning (mount engine, create key) with runtime**: must be separated in production.
--   **`@app.on_event("startup")` is deprecated in FastAPI 0.109+**: migration to `lifespan=` is pending.
 -   **No automated key rotation**: JWT secret supports `current`/`previous` kids in Vault KV, Ed25519 supports `kid`, but no operational rotation procedure exists.
--   **IAM routes (`/users`, `/organizations/me`, `/roles`) still use debug headers**: migration to JWT is Priority 6.
--   **No provisioning endpoint for Argon2id hashes**: only one test credential exists.
--   **`scripts/state_check.py` does not cover `auth_session`**: extension is Priority 9.
--   **`pgsodium_trg_mask_update` event trigger disabled**: only Ed25519 verification is used, not column masking.
 -   **`securebiz_get_context()` is VOLATILE, not STABLE**: prevents plan-level caching in RLS policy evaluation.
 -   **`auth_session.refresh_tokens` has RLS disabled**: intentional (session store protected by strict ACLs, not a tenant table).
 -   **`httpx.ASGITransport` does not inject cookies set via `cookies.set()`**: tests must use explicit `Cookie` header for replay scenarios. Applies to both `httpx` and `httpx2`.
+-   **`securebiz_user` is a SUPERUSER**: acceptable for migration admin in the lab, but must be replaced in production by a non-superuser migration role.

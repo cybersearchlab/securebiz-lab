@@ -1,13 +1,18 @@
 FROM python:3.12-slim
 
+# Apply latest Debian security patches (fixes HIGH/CRITICAL OS CVEs where possible)
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-# Installation des dependances applicatives et des versions corrigees
-# dans une seule couche Docker.
+# Install application dependencies and pinned security-fixed versions
+# in a single Docker layer.
 COPY requirements.txt .
 
 RUN python -m pip install --no-cache-dir \
@@ -23,17 +28,17 @@ RUN python -m pip install --no-cache-dir \
     "urllib3==2.8.0" \
     && python -m pip check
 
-# Suppression de pip (non utilise au runtime).
+# Remove pip (not used at runtime).
 RUN python -m pip uninstall -y pip
 
 COPY ./app ./app
 
-# Creation d'un utilisateur non-root dedie (DS-0002).
+# Create a dedicated non-root user (DS-0002).
 RUN groupadd --system --gid 1000 appgroup \
     && useradd --system --uid 1000 --gid appgroup \
        --no-create-home --shell /usr/sbin/nologin appuser
 
-# Code detenu par root, accessible en lecture uniquement.
+# Code owned by root, read-only for the app user.
 RUN chown -R root:appgroup /app \
     && find /app -type d -exec chmod 0550 {} \; \
     && find /app -type f -exec chmod 0440 {} \;
