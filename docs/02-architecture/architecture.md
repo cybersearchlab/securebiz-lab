@@ -426,17 +426,3 @@ Migrate @app.on_event("startup") to lifespan=.
 Separate Vault provisioning from runtime.
 
 Implement a restricted Vault token policy for production.
-
-## Ce qui a changé vs v0.3.0
-
-| Section | Changement |
-|---|---|
-| **§1 Deployed Architecture** | Vault : ajout `KV-v2 engines`, stockage du JWT secret. API : ajout `issue and verify JWTs`. DB : ajout `store refresh token hashes`. |
-| **§2.3 (nouveau)** | JWT secret loading : `get_jwt_secret()`, cache, rotation `current`/`previous`. |
-| **§3 Code Organization** | Ajout `app/core/jwt.py`, `app/services/refresh.py`, `app/schemas/auth.py`, `app/api/routes/auth.py`. Précision sur `main.py` (4 routers), `config.py` (JWT/refresh TTL), `database.py` (auth connection), `vault.py` (JWT secret), `dependencies.py` (3 dépendances). |
-| **§4 Business Tables** | Ajout `auth_session.refresh_tokens` dans les schemas privés. |
-| **§5 Authentication Architecture (nouveau)** | 4 sous-sections : JWT access tokens, refresh tokens, auth flow (9/9 tests), auth dependencies. |
-| **§6 Organization Isolation** | Ajout `auth_session.get_user_status` et `auth_session.refresh_tokens` dans le modèle de policy. Précision : JWT et signed tenant context = 2 mécanismes séparés. |
-| **§7 PostgreSQL Role Separation** | Mise à jour `securebiz_auth` : `get_user_status`, `refresh_tokens`. |
-| **§8 Known Limitations** | 6 nouvelles limitations : Vault token, `init_vault_key` mixte, `@app.on_event` déprécié, key rotation (JWT + Ed25519), IAM routes, provisioning, `VOLATILE`, RLS disabled. |
-| **§9 Next Steps** | 9 items (contre 5 en v0.3.0) : migration IAM routes, update tests, provisioning endpoint, tests isolation sous JWT, extend state_check, DevSecOps, lifespan, Vault separation, restricted Vault policy. |
